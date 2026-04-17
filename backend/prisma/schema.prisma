@@ -1,0 +1,95 @@
+// Prisma Schema for Hermes Agent Office UI
+// SQLite database configuration
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Agent - represents an AI agent in the office
+model Agent {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  displayName String
+  avatar      String?  // Pixel avatar config (JSON string)
+  status      String   @default("OFFLINE") // ONLINE | OFFLINE | BUSY | IDLE | ERROR
+  config      String?  // SQLite stores JSON as String
+  createdAt   Int      @default(strftime("%s", "now"))
+  updatedAt   Int      @default(strftime("%s", "now"))
+
+  tasks      Task[]
+  activities Activity[]
+  metrics   AgentMetric[]
+}
+
+// Task - represents a task executed by an agent
+model Task {
+  id          String   @id @default(uuid())
+  agentId     String
+  type        String   @default("RESEARCH") // RESEARCH | CODE_GENERATION | ANALYSIS | COMMUNICATION | MAINTENANCE
+  status      String   @default("PENDING") // PENDING | RUNNING | COMPLETED | FAILED | CANCELLED
+  payload    String?  // SQLite JSON storage
+  result     String?  // SQLite JSON storage
+  startedAt  Int?     // Unix timestamp
+  completedAt Int?    // Unix timestamp
+  createdAt  Int      @default(strftime("%s", "now"))
+
+  agent      Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+// Activity - for timeline visualization
+model Activity {
+  id          String   @id @default(uuid())
+  agentId     String
+  type        String   @default("AGENT_ONLINE") // TASK_STARTED | TASK_COMPLETED | TASK_FAILED | AGENT_ONLINE | AGENT_OFFLINE | CONFIG_UPDATED
+  description String
+  metadata   String?  // SQLite JSON storage
+  createdAt  Int      @default(strftime("%s", "now"))
+
+  agent      Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+// AgentMetric - performance metrics
+model AgentMetric {
+  id          String   @id @default(uuid())
+  agentId     String
+  cpuUsage    Float?
+  memoryUsage Float?
+  apiCalls   Int      @default(0)
+  timestamp  Int      @default(strftime("%s", "now"))
+
+  agent      Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+// AgentStatus enum values (for reference)
+// ONLINE - Agent is connected and ready
+// OFFLINE - Agent is disconnected
+// BUSY - Agent is executing a task
+// IDLE - Agent is connected but idle
+// ERROR - Agent is in error state
+
+// TaskStatus enum values
+// PENDING - Task is queued
+// RUNNING - Task is being executed
+// COMPLETED - Task was successful
+// FAILED - Task failed
+// CANCELLED - Task was cancelled
+
+// TaskType enum values
+// RESEARCH - Research tasks
+// CODE_GENERATION - Code generation tasks
+// ANALYSIS - Analysis tasks
+// COMMUNICATION - Communication tasks
+// MAINTENANCE - Maintenance tasks
+
+// ActivityType enum values
+// TASK_STARTED - Task started
+// TASK_COMPLETED - Task completed
+// TASK_FAILED - Task failed
+// AGENT_ONLINE - Agent came online
+// AGENT_OFFLINE - Agent went offline
+// CONFIG_UPDATED - Agent config updated
