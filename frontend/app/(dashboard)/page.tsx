@@ -1,33 +1,28 @@
 'use client';
 
-import { OfficeGrid } from '@/components/pixel-office/OfficeGrid';
-import { StatCard } from '@/components/dashboard/StatCard';
-import { LogStream } from '@/components/dashboard/LogStream';
-import { TaskDistribution } from '@/components/dashboard/TaskDistribution';
-import { useAgents } from '@/hooks/useAgents';
-import { useTasks, useTaskStats } from '@/hooks/useTasks';
-import { useWebSocket } from '@/lib/websocket-client';
-import {
-  Users,
-  CheckCircle,
-  Clock,
-  Activity,
-  Loader2,
-} from 'lucide-react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
+import { Users, CheckCircle, Clock, Activity, Loader2 } from 'lucide-react';
+
+import { PixelCanvas } from '@/components/pixel-office/PixelCanvas';
+import { LogStream } from '@/components/dashboard/LogStream';
+import { SystemStatusCard } from '@/components/dashboard/SystemStatusCard';
+import { AgentStatsCard } from '@/components/dashboard/AgentStatsCard';
+import { useWebSocket } from '@/hooks/useWebSocket';
+import type { PixelAgent } from '../../../shared/types/hermes';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default function DashboardPage() {
-  const { agents, isLoading: agentsLoading, isError: agentsError } = useAgents();
-  const { tasks, isLoading: tasksLoading, isError: tasksError } = useTasks();
-  const { stats: taskStats, isLoading: statsLoading } = useTaskStats();
-  const { isConnected } = useWebSocket();
+  const { isConnected, systemState, agents, logs } = useWebSocket();
+  const [selectedAgent, setSelectedAgent] = useState<PixelAgent | null>(null);
 
-  const onlineAgents = agents.filter(
-    (a) => a.currentStatus === 'ONLINE' || a.currentStatus === 'BUSY'
-  ).length;
+  const isLoading = !systemState && isConnected;
 
-  const busyAgents = agents.filter((a) => a.currentStatus === 'BUSY').length;
+  // Calculate stats
+  const activeAgents = agents.filter(a => a.status !== 'offline').length;
+  const workingAgents = agents.filter(a => a.status === 'working').length;
+  const busyAgents = agents.filter(a => a.status === 'busy').length;
+  const sessionAgents = agents.filter(a => a.type === 'session').length;
 
   return (
     <div className="space-y-6">
@@ -38,9 +33,9 @@ export default function DashboardPage() {
         className="flex items-center justify-between"
       >
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">仪表盘</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Hermes Agent 办公室</h1>
           <p className="text-muted-foreground mt-1">
-            实时监控和管理你的 AI Agent 团队
+            实时监控 Hermes Agent 运行状态和活动
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -55,17 +50,9 @@ export default function DashboardPage() {
         </div>
       </motion.div>
 
-      {/* Error Message */}
-      {agentsError && (
-        <div className="bg-destructive/10 text-destructive p-4 rounded-lg">
-          <p className="font-medium">获取 Agent 数据失败</p>
-          <p className="text-sm">请检查后端服务是否正常运行</p>
-        </div>
-      )}
-
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {agentsLoading ? (
+        {isLoading ? (
           <>
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
@@ -76,65 +63,124 @@ export default function DashboardPage() {
           <>
             <StatCard
               title="在线 Agent"
-              value={`${onlineAgents}/${agents.length}`}
-              description={`${busyAgents} 个正在工作中`}
+              value={`${activeAgents}/${agents.length}`}
+              description={`${workingAgents} 个工作中, ${busyAgents} 个忙碌`}
               icon={Users}
               color="primary"
             />
             <StatCard
-              title="已完成任务"
-              value={taskStats?.completed || 0}
-              description="今日总计"
+              title="活跃会话"
+              value={sessionAgents}
+              description="当前活跃的会话数量"
               icon={CheckCircle}
               color="success"
-              trend={{ value: 12, isPositive: true }}
             />
             <StatCard
-              title="运行中任务"
-              value={taskStats?.running || 0}
-              description={`${taskStats?.pending || 0} 个等待中`}
+              title="日志条目"
+              value={logs.length}
+              description="最近收到的日志数量"
               icon={Clock}
               color="warning"
             />
             <StatCard
-              title="系统健康度"
-              value="98%"
-              description="所有服务正常"
+              title="系统状态"
+              value={systemState?.authStatus === 'authenticated' ? '正常' : '异常'}
+              description={systemState?.model?.provider || 'unknown'}
               icon={Activity}
-              color="success"
+              color={systemState?.authStatus === 'authenticated' ? 'success' : 'destructive'}
             />
           </>
         )}
       </div>
 
-      {/* Office Grid */}
+      {/* Main Content Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Pixel Office Canvas */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="lg:col-span-2"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold">像素办公室</h2>
+            {isLoading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+          </div>
+          <div className="bg-slate-950 rounded-lg border border-slate-800 p-4 overflow-x-auto">
+            <PixelCanvas
+              agents={agents}
+              onAgentClick={setSelectedAgent}
+            />
+          </div>
+
+          {/* Selected Agent Info */}
+          {selectedAgent && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="mt-4 p-4 bg-slate-900/50 rounded-lg border border-slate-800"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-medium text-slate-200">{selectedAgent.displayName}</h3>
+                  <p className="text-sm text-slate-400">{selectedAgent.currentActivity?.description || '空闲中'}</p>
+                </div>
+                <div className="text-right text-sm">
+                  <div className="text-slate-400">消息数: {selectedAgent.metrics.totalMessages}</div>
+                  <div className="text-slate-400">状态: <span className="capitalize">{selectedAgent.status}</span></div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </motion.div>
+
+        {/* Sidebar */}
+        <div className="space-y-6">
+          <SystemStatusCard systemState={systemState} isConnected={isConnected} />
+          <AgentStatsCard agents={agents} />
+        </div>
+      </div>
+
+      {/* Log Stream */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
       >
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold">像素办公室</h2>
-          {agentsLoading && (
-            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-          )}
-        </div>
-        <div className="bg-card rounded-lg border min-h-[300px]">
-          <OfficeGrid agents={agents} />
-        </div>
+        <h2 className="text-xl font-semibold mb-4">实时日志</h2>
+        <LogStream logs={logs} maxHeight={400} />
       </motion.div>
+    </div>
+  );
+}
 
-      {/* Charts Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <LogStream />
-        </div>
+// Stat Card Component
+interface StatCardProps {
+  title: string;
+  value: string | number;
+  description: string;
+  icon: React.ComponentType<{ className?: string }>;
+  color: 'primary' | 'success' | 'warning' | 'destructive';
+}
+
+function StatCard({ title, value, description, icon: Icon, color }: StatCardProps) {
+  const colorClasses = {
+    primary: 'bg-blue-500/10 text-blue-500',
+    success: 'bg-green-500/10 text-green-500',
+    warning: 'bg-yellow-500/10 text-yellow-500',
+    destructive: 'bg-red-500/10 text-red-500',
+  };
+
+  return (
+    <div className="bg-slate-900/50 rounded-lg p-4 border border-slate-800">
+      <div className="flex items-center justify-between">
         <div>
-          {tasksLoading ? (
-            <Skeleton className="h-[400px]" />
-          ) : (
-            <TaskDistribution tasks={tasks} />
-          )}
+          <p className="text-sm text-slate-400">{title}</p>
+          <p className="text-2xl font-bold text-slate-100">{value}</p>
+          <p className="text-xs text-slate-500">{description}</p>
+        </div>
+        <div className={`p-2 rounded-lg ${colorClasses[color]}`}>
+          <Icon className="w-5 h-5" />
         </div>
       </div>
     </div>
