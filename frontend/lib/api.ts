@@ -7,7 +7,10 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
 
 // Helper function for API calls
 async function fetchAPI<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${url}`, {
+  const fullUrl = `${API_BASE}${url}`;
+  console.log(`[API] ${options?.method || 'GET'} ${fullUrl}`);
+
+  const response = await fetch(fullUrl, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -16,11 +19,14 @@ async function fetchAPI<T>(url: string, options?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: "Unknown error" }));
-    throw new Error(error.error || `HTTP ${response.status}`);
+    const text = await response.text().catch(() => "Unknown error");
+    console.error(`[API Error] ${response.status}: ${text}`);
+    throw new Error(`HTTP ${response.status}: ${text}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  console.log(`[API Response]`, data);
+  return data;
 }
 
 // Agent API

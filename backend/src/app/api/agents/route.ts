@@ -6,6 +6,7 @@ import { getCurrentTimestamp, safeJsonStringify } from '@/lib/utils';
 // GET /api/agents - 获取所有 Agent
 export async function GET() {
   try {
+    console.log('[API /agents] Fetching agents...');
     const agents = await prisma.agent.findMany({
       include: {
         _count: {
@@ -14,6 +15,7 @@ export async function GET() {
       },
       orderBy: { createdAt: 'desc' }
     });
+    console.log(`[API /agents] Found ${agents.length} agents`);
 
     // 合并实时状态
     const agentsWithStatus = agents.map((agent) => {

@@ -21,8 +21,13 @@ class AgentMonitor {
 
     console.log('[AgentMonitor] Starting...');
 
-    // 初始化模拟 Agent
-    await this.initMockAgents();
+    try {
+      // 初始化模拟 Agent
+      await this.initMockAgents();
+      console.log('[AgentMonitor] Mock agents initialized');
+    } catch (error) {
+      console.error('[AgentMonitor] Failed to initialize mock agents:', error);
+    }
 
     // 启动监控循环
     this.interval = setInterval(() => {
@@ -47,22 +52,42 @@ class AgentMonitor {
   }
 
   private async initMockAgents() {
-    for (const agentData of this.mockAgents) {
-      const existing = await prisma.agent.findUnique({
-        where: { name: agentData.name }
-      });
+    console.log('[AgentMonitor] Initializing mock agents...');
+    try {
+      // 检查数据库连接
+      const count = await prisma.agent.count();
+      console.log(`[AgentMonitor] Current agent count: ${count}`);
 
-      if (!existing) {
-        const agent = await prisma.agent.create({
-          data: {
-            name: agentData.name,
-            displayName: agentData.displayName,
-            status: 'OFFLINE',
-            config: JSON.stringify({ color: agentData.color }),
+      for (const agentData of this.mockAgents) {
+        try {
+          const existing = await prisma.agent.findUnique({
+            where: { name: agentData.name }
+          });
+
+          if (!existing) {
+            const agent = await prisma.agent.create({
+              data: {
+                name: agentData.name,
+                displayName: agentData.displayName,
+                status: 'OFFLINE',
+                config: JSON.stringify({ color: agentData.color }),
+              }
+            });
+            console.log(`[AgentMonitor] Created mock agent: ${agent.name}`);
+          } else {
+            console.log(`[AgentMonitor] Agent already exists: ${agentData.name}`);
           }
-        });
-        console.log(`[AgentMonitor] Created mock agent: ${agent.name}`);
+        } catch (err) {
+          console.error(`[AgentMonitor] Error creating agent ${agentData.name}:`, err);
+        }
       }
+
+      // 验证创建结果
+      const finalCount = await prisma.agent.count();
+      console.log(`[AgentMonitor] Final agent count: ${finalCount}`);
+    } catch (error) {
+      console.error('[AgentMonitor] Failed to initialize mock agents:', error);
+      throw error;
     }
   }
 

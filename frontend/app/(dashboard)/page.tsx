@@ -18,8 +18,8 @@ import { motion } from 'framer-motion';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default function DashboardPage() {
-  const { agents, isLoading: agentsLoading } = useAgents();
-  const { tasks, isLoading: tasksLoading } = useTasks();
+  const { agents, isLoading: agentsLoading, isError: agentsError } = useAgents();
+  const { tasks, isLoading: tasksLoading, isError: tasksError } = useTasks();
   const { stats: taskStats, isLoading: statsLoading } = useTaskStats();
   const { isConnected } = useWebSocket();
 
@@ -54,6 +54,14 @@ export default function DashboardPage() {
           </span>
         </div>
       </motion.div>
+
+      {/* Error Message */}
+      {agentsError && (
+        <div className="bg-destructive/10 text-destructive p-4 rounded-lg">
+          <p className="font-medium">获取 Agent 数据失败</p>
+          <p className="text-sm">请检查后端服务是否正常运行</p>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
