@@ -2,6 +2,7 @@
 import type { WebSocket } from 'ws';
 import type { LogEntry } from '../../../shared/types/log';
 import type { AgentStatus } from '../../../shared/types/agent';
+import type { HermesInsights } from '../../../shared/types/hermes';
 
 interface CacheEntry<T> {
   value: T;
@@ -15,6 +16,7 @@ class MemoryStore {
   private logs: LogEntry[] = [];
   private maxLogs = 1000;
   private wsClients = new Set<WebSocket>();
+  private insights: HermesInsights | null = null;
 
   // Agent 实时状态
   setAgentStatus(agentId: string, status: AgentStatus) {
@@ -112,6 +114,28 @@ class MemoryStore {
         this.agentMetrics.delete(agentId);
       }
     }
+  }
+
+  // 日志高级操作
+  getLogById(id: string): LogEntry | undefined {
+    return this.logs.find(log => log.id === id);
+  }
+
+  cleanupLogs(cutoff: number) {
+    this.logs = this.logs.filter(log => log.timestamp >= cutoff);
+  }
+
+  getLogCount(): number {
+    return this.logs.length;
+  }
+
+  // Hermes 洞察数据
+  setInsights(insights: HermesInsights) {
+    this.insights = insights;
+  }
+
+  getInsights(): HermesInsights | null {
+    return this.insights;
   }
 }
 

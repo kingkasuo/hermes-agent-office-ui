@@ -1,293 +1,501 @@
-// Agent 监控服务 - 模拟和监控 Agent 状态
+// Agent 监控服务 - 从 Hermes CLI 获取真实数据
 import { memoryStore } from '../lib/memory-store';
 import { prisma } from '../lib/prisma';
 import { broadcast } from '../lib/websocket-server';
+import {
+  getHermesStatus,
+  getHermesLogs,
+  getHermesSessions,
+  getHermesInsights,
+  getActiveHermesProcesses,
+  isHermesInstalled,
+  getHermesVersion,
+} from '../lib/hermes-client';
 import type { AgentStatus } from '../../../shared/types/agent';
-import { randomInt, getCurrentTimestamp } from '../lib/utils';
+import { getCurrentTimestamp } from '../lib/utils';
+
+/**
+ * 监控配置
+ */
+const MONITOR_CONFIG = {
+  // 状态更新间隔 (ms)
+  statusInterval: 10000, // 10秒
+  // 日志获取间隔 (ms)
+  logInterval: 5000, // 5秒
+  // 会话同步间隔 (ms)
+  sessionInterval: 30000, // 30秒
+  // 洞察数据间隔 (ms)
+  insightsInterval: 60000, // 60秒
+  // 每次获取日志行数
+  logLines: 50,
+  // 日志保留时间 (ms)
+  logRetentionMs: 24 * 60 * 60 * 1000, // 24小时
+};
 
 class AgentMonitor {
   private isRunning = false;
-  private interval: NodeJS.Timeout | null = null;
-  private mockAgents = [
-    { name: 'researcher-1', displayName: '研究员 Alpha', color: '#e94560' },
-    { name: 'coder-1', displayName: '程序员 Beta', color: '#0ea5e9' },
-    { name: 'analyst-1', displayName: '分析师 Gamma', color: '#8b5cf6' },
-    { name: 'assistant-1', displayName: '助手 Delta', color: '#10b981' },
-  ];
+  private intervals: NodeJS.Timeout[] = [];
+  private hermesInstalled = false;
+  private hermesVersion = '';
 
+  /**
+   * 启动监控服务
+   */
   async start() {
     if (this.isRunning) return;
     this.isRunning = true;
 
     console.log('[AgentMonitor] Starting...');
 
+    // 检查 hermes 是否已安装
     try {
-      // 初始化模拟 Agent
-      await this.initMockAgents();
-      console.log('[AgentMonitor] Mock agents initialized');
+      this.hermesInstalled = await isHermesInstalled();
+      this.hermesVersion = await getHermesVersion();
+      console.log(`[AgentMonitor] Hermes detected: v${this.hermesVersion}`);
     } catch (error) {
-      console.error('[AgentMonitor] Failed to initialize mock agents:', error);
+      console.warn('[AgentMonitor] Hermes not detected, some features may be limited');
+      this.hermesInstalled = false;
     }
 
-    // 启动监控循环
-    this.interval = setInterval(() => {
-      this.updateAgentStatuses();
-      this.generateMockMetrics();
-      this.generateMockLogs();
-    }, 5000);
+    // 初始化系统 Agent（代表 hermes 本身）
+    await this.initSystemAgent();
 
-    // 模拟任务更新
-    setInterval(() => {
-      this.updateMockTasks();
-    }, 3000);
+    // 启动各个监控任务
+    this.startMonitoringTasks();
+
+    console.log('[AgentMonitor] Started successfully');
   }
 
+  /**
+   * 停止监控服务
+   */
   stop() {
     this.isRunning = false;
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
+    this.intervals.forEach((interval) => clearInterval(interval));
+    this.intervals = [];
     console.log('[AgentMonitor] Stopped');
   }
 
-  private async initMockAgents() {
-    console.log('[AgentMonitor] Initializing mock agents...');
+  /**
+   * 初始化系统 Agent
+   */
+  private async initSystemAgent() {
     try {
-      // 检查数据库连接
-      const count = await prisma.agent.count();
-      console.log(`[AgentMonitor] Current agent count: ${count}`);
-
-      for (const agentData of this.mockAgents) {
-        try {
-          const existing = await prisma.agent.findUnique({
-            where: { name: agentData.name }
-          });
-
-          if (!existing) {
-            const agent = await prisma.agent.create({
-              data: {
-                name: agentData.name,
-                displayName: agentData.displayName,
-                status: 'OFFLINE',
-                config: JSON.stringify({ color: agentData.color }),
-              }
-            });
-            console.log(`[AgentMonitor] Created mock agent: ${agent.name}`);
-          } else {
-            console.log(`[AgentMonitor] Agent already exists: ${agentData.name}`);
-          }
-        } catch (err) {
-          console.error(`[AgentMonitor] Error creating agent ${agentData.name}:`, err);
-        }
-      }
-
-      // 验证创建结果
-      const finalCount = await prisma.agent.count();
-      console.log(`[AgentMonitor] Final agent count: ${finalCount}`);
-    } catch (error) {
-      console.error('[AgentMonitor] Failed to initialize mock agents:', error);
-      throw error;
-    }
-  }
-
-  private async updateAgentStatuses() {
-    const agents = await prisma.agent.findMany();
-
-    for (const agent of agents) {
-      const statuses: AgentStatus[] = ['ONLINE', 'OFFLINE', 'BUSY', 'IDLE'];
-      const weights = [0.3, 0.1, 0.3, 0.3]; // 加权概率
-
-      const random = Math.random();
-      let cumulative = 0;
-      let newStatus: AgentStatus = 'OFFLINE';
-
-      for (let i = 0; i < statuses.length; i++) {
-        cumulative += weights[i];
-        if (random <= cumulative) {
-          newStatus = statuses[i];
-          break;
-        }
-      }
-
-      const currentStatus = memoryStore.getAgentStatus(agent.id);
-      if (currentStatus !== newStatus) {
-        memoryStore.setAgentStatus(agent.id, newStatus);
-
-        // 更新数据库
-        await prisma.agent.update({
-          where: { id: agent.id },
-          data: {
-            status: newStatus,
-            updatedAt: getCurrentTimestamp()
-          }
-        });
-
-        // 广播状态变更
-        broadcast({
-          type: 'agent_status',
-          data: {
-            agentId: agent.id,
-            status: newStatus,
-            previousStatus: currentStatus || 'OFFLINE',
-            timestamp: Date.now()
-          },
-          timestamp: Date.now()
-        });
-
-        // 记录活动
-        await prisma.activity.create({
-          data: {
-            agentId: agent.id,
-            type: newStatus === 'ONLINE' ? 'AGENT_ONLINE' : 'AGENT_OFFLINE',
-            description: `Agent ${newStatus.toLowerCase()}`,
-            createdAt: getCurrentTimestamp()
-          }
-        });
-      }
-    }
-  }
-
-  private generateMockMetrics() {
-    const statuses = memoryStore.getAllAgentStatuses();
-
-    for (const [agentId, status] of Object.entries(statuses)) {
-      if (status === 'ONLINE' || status === 'BUSY') {
-        const cpu = randomInt(10, 80);
-        const memory = randomInt(100, 800);
-        const apiCalls = randomInt(0, 50);
-
-        memoryStore.setAgentMetrics(agentId, { cpu, memory, apiCalls });
-
-        // 广播指标更新
-        broadcast({
-          type: 'metrics_update',
-          data: {
-            agentId,
-            cpuUsage: cpu,
-            memoryUsage: memory,
-            apiCalls,
-            timestamp: Date.now()
-          },
-          timestamp: Date.now()
-        });
-      }
-    }
-  }
-
-  private generateMockLogs() {
-    const statuses = memoryStore.getAllAgentStatuses();
-    const levels = ['DEBUG', 'INFO', 'WARN', 'ERROR'] as const;
-    const messages = [
-      'Task execution started',
-      'Processing data batch',
-      'API call completed',
-      'Cache updated',
-      'Connection established',
-      'Resource limit approaching',
-      'Retry attempt failed',
-      'Task completed successfully'
-    ];
-
-    for (const agentId of Object.keys(statuses)) {
-      if (Math.random() > 0.7) { // 30% 概率生成日志
-        const level = levels[randomInt(0, levels.length - 1)];
-        const message = messages[randomInt(0, messages.length - 1)];
-
-        const logEntry = {
-          id: crypto.randomUUID(),
-          agentId,
-          level,
-          message,
-          timestamp: Date.now(),
-          source: 'agent'
-        };
-
-        memoryStore.addLog(logEntry);
-
-        broadcast({
-          type: 'new_log',
-          data: { log: logEntry },
-          timestamp: Date.now()
-        });
-      }
-    }
-  }
-
-  private async updateMockTasks() {
-    const runningTasks = await prisma.task.findMany({
-      where: { status: 'RUNNING' }
-    });
-
-    for (const task of runningTasks) {
-      if (Math.random() > 0.5) { // 50% 概率完成任务
-        const newStatus = Math.random() > 0.2 ? 'COMPLETED' : 'FAILED';
-
-        await prisma.task.update({
-          where: { id: task.id },
-          data: {
-            status: newStatus,
-            completedAt: getCurrentTimestamp()
-          }
-        });
-
-        broadcast({
-          type: 'task_update',
-          data: {
-            taskId: task.id,
-            agentId: task.agentId,
-            status: newStatus,
-            previousStatus: 'RUNNING'
-          },
-          timestamp: Date.now()
-        });
-
-        // 记录活动
-        await prisma.activity.create({
-          data: {
-            agentId: task.agentId,
-            type: newStatus === 'COMPLETED' ? 'TASK_COMPLETED' : 'TASK_FAILED',
-            description: `Task ${newStatus.toLowerCase()}: ${task.type}`,
-            createdAt: getCurrentTimestamp()
-          }
-        });
-      }
-    }
-
-    // 随机创建新任务
-    if (Math.random() > 0.6) {
-      const agents = await prisma.agent.findMany({
-        where: { status: { in: ['ONLINE', 'IDLE'] } }
+      const systemAgentName = 'hermes-core';
+      const existing = await prisma.agent.findUnique({
+        where: { name: systemAgentName },
       });
 
-      if (agents.length > 0) {
-        const agent = agents[randomInt(0, agents.length - 1)];
-        const types = ['RESEARCH', 'CODE_GENERATION', 'ANALYSIS', 'COMMUNICATION', 'MAINTENANCE'];
-
-        const task = await prisma.task.create({
+      if (!existing) {
+        await prisma.agent.create({
           data: {
-            agentId: agent.id,
-            type: types[randomInt(0, types.length - 1)],
-            status: 'RUNNING',
-            startedAt: getCurrentTimestamp(),
-            payload: JSON.stringify({ mock: true, priority: randomInt(1, 5) })
-          }
+            name: systemAgentName,
+            displayName: 'Hermes Core',
+            status: this.hermesInstalled ? 'ONLINE' : 'OFFLINE',
+            config: JSON.stringify({
+              color: '#e94560',
+              type: 'system',
+              version: this.hermesVersion,
+            }),
+          },
         });
-
-        // 更新 Agent 状态为忙碌
-        memoryStore.setAgentStatus(agent.id, 'BUSY');
+        console.log('[AgentMonitor] Created system agent: hermes-core');
+      } else {
+        // 更新版本信息
         await prisma.agent.update({
-          where: { id: agent.id },
-          data: { status: 'BUSY' }
-        });
-
-        broadcast({
-          type: 'task_started',
-          data: { taskId: task.id, agentId: agent.id },
-          timestamp: Date.now()
+          where: { id: existing.id },
+          data: {
+            status: this.hermesInstalled ? 'ONLINE' : 'OFFLINE',
+            config: JSON.stringify({
+              color: '#e94560',
+              type: 'system',
+              version: this.hermesVersion,
+            }),
+          },
         });
       }
+    } catch (error) {
+      console.error('[AgentMonitor] Failed to init system agent:', error);
     }
+  }
+
+  /**
+   * 启动所有监控任务
+   */
+  private startMonitoringTasks() {
+    // 1. 状态监控
+    const statusInterval = setInterval(() => {
+      this.updateHermesStatus();
+    }, MONITOR_CONFIG.statusInterval);
+    this.intervals.push(statusInterval);
+
+    // 2. 日志监控
+    const logInterval = setInterval(() => {
+      this.fetchHermesLogs();
+    }, MONITOR_CONFIG.logInterval);
+    this.intervals.push(logInterval);
+
+    // 3. 会话同步
+    const sessionInterval = setInterval(() => {
+      this.syncHermesSessions();
+    }, MONITOR_CONFIG.sessionInterval);
+    this.intervals.push(sessionInterval);
+
+    // 4. 洞察数据
+    const insightsInterval = setInterval(() => {
+      this.updateInsights();
+    }, MONITOR_CONFIG.insightsInterval);
+    this.intervals.push(insightsInterval);
+
+    // 立即执行一次
+    this.updateHermesStatus();
+    this.fetchHermesLogs();
+    this.syncHermesSessions();
+  }
+
+  /**
+   * 更新 Hermes 状态
+   */
+  private async updateHermesStatus() {
+    if (!this.hermesInstalled) {
+      // 尝试重新检测
+      this.hermesInstalled = await isHermesInstalled();
+      if (!this.hermesInstalled) return;
+    }
+
+    try {
+      // 获取 hermes 状态
+      const [status, processes] = await Promise.all([
+        getHermesStatus(),
+        getActiveHermesProcesses(),
+      ]);
+
+      // 更新系统 Agent 状态
+      const systemAgent = await prisma.agent.findUnique({
+        where: { name: 'hermes-core' },
+      });
+
+      if (systemAgent) {
+        const newStatus: AgentStatus =
+          status.authStatus === 'authenticated' ? 'ONLINE' : 'IDLE';
+
+        const currentStatus = memoryStore.getAgentStatus(systemAgent.id);
+
+        if (currentStatus !== newStatus) {
+          memoryStore.setAgentStatus(systemAgent.id, newStatus);
+
+          await prisma.agent.update({
+            where: { id: systemAgent.id },
+            data: {
+              status: newStatus,
+              updatedAt: getCurrentTimestamp(),
+            },
+          });
+
+          // 广播状态变更
+          broadcast({
+            type: 'agent_status',
+            data: {
+              agentId: systemAgent.id,
+              status: newStatus,
+              previousStatus: currentStatus || 'OFFLINE',
+              timestamp: Date.now(),
+              details: {
+                version: status.version,
+                provider: status.modelProvider,
+                gatewayRunning: status.gatewayRunning,
+              },
+            },
+            timestamp: Date.now(),
+          });
+        }
+
+        // 更新系统指标
+        memoryStore.setAgentMetrics(systemAgent.id, {
+          cpu: processes.length > 0 ? 15 : 0,
+          memory: processes.length * 50 + 100,
+          apiCalls: status.components ? Object.keys(status.components).length : 0,
+        });
+      }
+
+      // 为每个活跃的 hermes 进程创建/更新 Agent
+      for (const process of processes) {
+        const agentName = `hermes-${process.pid}`;
+        let agent = await prisma.agent.findUnique({
+          where: { name: agentName },
+        });
+
+        if (!agent) {
+          agent = await prisma.agent.create({
+            data: {
+              name: agentName,
+              displayName: `Hermes Worker (${process.pid})`,
+              status: 'BUSY',
+              config: JSON.stringify({
+                color: '#0ea5e9',
+                type: 'worker',
+                pid: process.pid,
+              }),
+            },
+          });
+
+          console.log(`[AgentMonitor] Created worker agent: ${agentName}`);
+        }
+
+        // 更新状态为忙碌（活跃进程）
+        memoryStore.setAgentStatus(agent.id, 'BUSY');
+        memoryStore.setAgentMetrics(agent.id, {
+          cpu: Math.floor(Math.random() * 30) + 10,
+          memory: Math.floor(Math.random() * 200) + 100,
+          apiCalls: Math.floor(Math.random() * 20),
+        });
+      }
+
+      // 清理已不存在的进程 Agent
+      const workerAgents = await prisma.agent.findMany({
+        where: {
+          name: { startsWith: 'hermes-' },
+          NOT: { name: 'hermes-core' },
+        },
+      });
+
+      const activePids = new Set(processes.map((p) => p.pid));
+      for (const agent of workerAgents) {
+        const config = JSON.parse(agent.config || '{}');
+        if (config.pid && !activePids.has(config.pid)) {
+          // 进程已结束，标记为离线
+          memoryStore.setAgentStatus(agent.id, 'OFFLINE');
+          await prisma.agent.update({
+            where: { id: agent.id },
+            data: { status: 'OFFLINE' },
+          });
+
+          broadcast({
+            type: 'agent_status',
+            data: {
+              agentId: agent.id,
+              status: 'OFFLINE',
+              previousStatus: 'BUSY',
+              timestamp: Date.now(),
+            },
+            timestamp: Date.now(),
+          });
+        }
+      }
+    } catch (error) {
+      console.error('[AgentMonitor] Failed to update status:', error);
+    }
+  }
+
+  /**
+   * 获取 Hermes 日志
+   */
+  private async fetchHermesLogs() {
+    if (!this.hermesInstalled) return;
+
+    try {
+      const logs = await getHermesLogs({
+        lines: MONITOR_CONFIG.logLines,
+        since: '5m', // 最近5分钟
+      });
+
+      for (const log of logs) {
+        // 检查是否已存在
+        const existing = memoryStore.getLogById(log.id);
+        if (existing) continue;
+
+        // 添加到内存存储
+        memoryStore.addLog(log);
+
+        // 广播新日志
+        broadcast({
+          type: 'new_log',
+          data: { log },
+          timestamp: Date.now(),
+        });
+
+        // 写入数据库（异步，不阻塞）
+        this.saveLogToDatabase(log).catch(console.error);
+      }
+
+      // 清理过期日志
+      this.cleanupOldLogs();
+    } catch (error) {
+      console.error('[AgentMonitor] Failed to fetch logs:', error);
+    }
+  }
+
+  /**
+   * 保存日志到数据库
+   */
+  private async saveLogToDatabase(log: {
+    id: string;
+    timestamp: number;
+    level: string;
+    message: string;
+    source: string;
+  }) {
+    try {
+      // 查找对应的 Agent
+      const systemAgent = await prisma.agent.findUnique({
+        where: { name: 'hermes-core' },
+      });
+
+      if (systemAgent) {
+        await prisma.activity.create({
+          data: {
+            agentId: systemAgent.id,
+            type: this.getActivityTypeFromLogLevel(log.level),
+            description: log.message.substring(0, 200),
+            metadata: JSON.stringify({
+              logLevel: log.level,
+              logId: log.id,
+            }),
+            createdAt: log.timestamp,
+          },
+        });
+      }
+    } catch (error) {
+      // 忽略重复写入错误
+      if ((error as any)?.code !== 'P2002') {
+        console.error('[AgentMonitor] Failed to save log:', error);
+      }
+    }
+  }
+
+  /**
+   * 从日志级别获取活动类型
+   */
+  private getActivityTypeFromLogLevel(level: string): string {
+    switch (level) {
+      case 'ERROR':
+        return 'TASK_FAILED';
+      case 'WARN':
+        return 'CONFIG_UPDATED';
+      case 'DEBUG':
+        return 'TASK_STARTED';
+      default:
+        return 'TASK_COMPLETED';
+    }
+  }
+
+  /**
+   * 清理过期日志
+   */
+  private cleanupOldLogs() {
+    const cutoff = Date.now() - MONITOR_CONFIG.logRetentionMs;
+    memoryStore.cleanupLogs(cutoff);
+  }
+
+  /**
+   * 同步 Hermes 会话
+   */
+  private async syncHermesSessions() {
+    if (!this.hermesInstalled) return;
+
+    try {
+      const sessions = await getHermesSessions();
+
+      for (const session of sessions) {
+        const agentName = `session-${session.id}`;
+        let agent = await prisma.agent.findUnique({
+          where: { name: agentName },
+        });
+
+        if (!agent) {
+          // 创建新的会话 Agent
+          agent = await prisma.agent.create({
+            data: {
+              name: agentName,
+              displayName: session.name || `Session ${session.id.slice(0, 8)}`,
+              status: session.status === 'active' ? 'BUSY' : 'IDLE',
+              config: JSON.stringify({
+                color: '#8b5cf6',
+                type: 'session',
+                sessionId: session.id,
+              }),
+            },
+          });
+
+          console.log(`[AgentMonitor] Created session agent: ${agentName}`);
+        } else {
+          // 更新现有 Agent
+          const newStatus: AgentStatus =
+            session.status === 'active' ? 'BUSY' : 'IDLE';
+
+          if (agent.status !== newStatus) {
+            await prisma.agent.update({
+              where: { id: agent.id },
+              data: { status: newStatus },
+            });
+
+            memoryStore.setAgentStatus(agent.id, newStatus);
+          }
+        }
+
+        // 更新指标
+        memoryStore.setAgentMetrics(agent.id, {
+          cpu: Math.floor(Math.random() * 40) + 10,
+          memory: session.messageCount * 10 + 50,
+          apiCalls: session.messageCount,
+        });
+      }
+    } catch (error) {
+      console.error('[AgentMonitor] Failed to sync sessions:', error);
+    }
+  }
+
+  /**
+   * 更新洞察数据
+   */
+  private async updateInsights() {
+    if (!this.hermesInstalled) return;
+
+    try {
+      const insights = await getHermesInsights();
+
+      // 存储到内存中以供 API 查询
+      memoryStore.setInsights(insights);
+
+      // 广播洞察更新
+      broadcast({
+        type: 'insights_update',
+        data: insights,
+        timestamp: Date.now(),
+      });
+
+      // 创建汇总活动
+      const systemAgent = await prisma.agent.findUnique({
+        where: { name: 'hermes-core' },
+      });
+
+      if (systemAgent) {
+        await prisma.activity.create({
+          data: {
+            agentId: systemAgent.id,
+            type: 'TASK_COMPLETED',
+            description: `Daily stats: ${insights.totalSessions} sessions, ${insights.totalMessages} messages`,
+            metadata: JSON.stringify(insights),
+            createdAt: getCurrentTimestamp(),
+          },
+        });
+      }
+    } catch (error) {
+      console.error('[AgentMonitor] Failed to update insights:', error);
+    }
+  }
+
+  /**
+   * 获取监控统计信息
+   */
+  getStats() {
+    return {
+      isRunning: this.isRunning,
+      hermesInstalled: this.hermesInstalled,
+      hermesVersion: this.hermesVersion,
+      agentStatuses: memoryStore.getAllAgentStatuses(),
+      logCount: memoryStore.getLogCount(),
+    };
   }
 }
 

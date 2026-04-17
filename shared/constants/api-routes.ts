@@ -20,6 +20,11 @@ export const API_ROUTES = {
   // System API
   HEALTH: '/health',
   STATS: '/stats',
+
+  // Hermes API
+  HERMES_STATUS: '/hermes/status',
+  HERMES_LOGS: '/hermes/logs',
+  HERMES_INSIGHTS: '/hermes/insights',
 } as const;
 
 export const WS_ROUTES = {
