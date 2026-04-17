@@ -8,19 +8,21 @@
     "start": "next start -p 3001",
     "lint": "next lint",
     "db:push": "prisma db push",
-    "db:generate": "prisma generate"
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev"
   },
   "dependencies": {
     "@prisma/client": "^6.2.0",
     "next": "^15.1.0",
-    "socket.io": "^4.8.1",
-    "zustand": "^5.0.2"
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
-    "@types/react": "19.2.14",
-    "eslint": "^9.17.0",
-    "eslint-config-next": "^15.1.0",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@types/ws": "^8.5.13",
     "prisma": "^6.2.0",
     "typescript": "^5.7.2"
   }

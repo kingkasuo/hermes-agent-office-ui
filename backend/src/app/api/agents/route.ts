@@ -1,56 +1,83 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { memoryStore } from '@/lib/memory-store';
+import { getCurrentTimestamp, safeJsonStringify } from '@/lib/utils';
 
-// In-memory store for agents (simulates database)
-const agentsStore = new Map();
-
-// Initialize with demo agents
-const demoAgents = [
-  { id: '1', name: 'hermes-1', displayName: 'Hermes Alpha', status: 'ONLINE', color: '#e94560' },
-  { id: '2', name: 'hermes-2', displayName: 'Hermes Beta', status: 'BUSY', color: '#4ade80' },
-  { id: '3', name: 'hermes-3', displayName: 'Hermes Gamma', status: 'IDLE', color: '#ffd700' },
-  { id: '4', name: 'hermes-4', displayName: 'Hermes Delta', status: 'OFFLINE', color: '#0f3460' },
-];
-
-// Initialize store
-demoAgents.forEach(agent => {
-  agentsStore.set(agent.id, {
-    ...agent,
-    avatar: agent.color,
-    config: '{}',
-    createdAt: Date.now() / 1000,
-    updatedAt: Date.now() / 1000,
-  });
-});
-
-// GET /api/agents - Get all agents
+// GET /api/agents - 获取所有 Agent
 export async function GET() {
-  const agents = Array.from(agentsStore.values());
-  return NextResponse.json({ agents });
+  try {
+    const agents = await prisma.agent.findMany({
+      include: {
+        _count: {
+          select: { tasks: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // 合并实时状态
+    const agentsWithStatus = agents.map((agent) => {
+      const realTimeStatus = memoryStore.getAgentStatus(agent.id);
+      const metrics = memoryStore.getAgentMetrics(agent.id);
+      return {
+        ...agent,
+        currentStatus: realTimeStatus || agent.status,
+        metrics: metrics || null,
+        taskCount: agent._count.tasks
+      };
+    });
+
+    return NextResponse.json({ agents: agentsWithStatus });
+  } catch (error) {
+    console.error('Failed to fetch agents:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch agents' },
+      { status: 500 }
+    );
+  }
 }
 
-// POST /api/agents - Create new agent
+// POST /api/agents - 创建新 Agent
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    
-    const newAgent = {
-      id: crypto.randomUUID(),
-      name: body.name || `agent-${Date.now()}`,
-      displayName: body.displayName || body.name || 'New Agent',
-      status: 'OFFLINE',
-      avatar: body.color || '#e94560',
-      config: body.config || '{}',
-      createdAt: Math.floor(Date.now() / 1000),
-      updatedAt: Math.floor(Date.now() / 1000),
-    };
-    
-    agentsStore.set(newAgent.id, newAgent);
-    
-    return NextResponse.json({ agent: newAgent }, { status: 201 });
+
+    if (!body.name || !body.displayName) {
+      return NextResponse.json(
+        { error: 'Name and displayName are required' },
+        { status: 400 }
+      );
+    }
+
+    const existing = await prisma.agent.findUnique({
+      where: { name: body.name }
+    });
+
+    if (existing) {
+      return NextResponse.json(
+        { error: 'Agent with this name already exists' },
+        { status: 409 }
+      );
+    }
+
+    const agent = await prisma.agent.create({
+      data: {
+        name: body.name,
+        displayName: body.displayName,
+        avatar: body.avatar ? safeJsonStringify(body.avatar) : null,
+        status: 'OFFLINE',
+        config: body.config ? safeJsonStringify(body.config) : null,
+        createdAt: getCurrentTimestamp(),
+        updatedAt: getCurrentTimestamp()
+      }
+    });
+
+    return NextResponse.json({ agent }, { status: 201 });
   } catch (error) {
+    console.error('Failed to create agent:', error);
     return NextResponse.json(
       { error: 'Failed to create agent' },
-      { status: 400 }
+      { status: 500 }
     );
   }
 }

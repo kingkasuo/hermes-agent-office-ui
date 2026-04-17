@@ -85,3 +85,9 @@ export interface WSLogEntry {
 }
 
 export type WSMessage = WSAgentUpdate | WSTaskUpdate | WSLogEntry;
+
+// Re-export from individual files
+export * from './agent';
+export * from './task';
+export * from './log';
+export * from './websocket';
