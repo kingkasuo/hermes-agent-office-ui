@@ -114,7 +114,7 @@ function DonutChart({ data, size = 100 }: DonutChartProps) {
       // Inner circle (donut hole)
       ctx.beginPath();
       ctx.arc(centerX, centerY, innerRadius, 0, 2 * Math.PI);
-      ctx.fillStyle = '#1a1a2e';
+      ctx.fillStyle = '#0f1011';
       ctx.fill();
 
       startAngle = endAngle;
@@ -139,29 +139,35 @@ interface MetricsDisplayProps {
 }
 
 function MetricsDisplay({ cpuUsage, memoryUsage, apiCalls }: MetricsDisplayProps) {
+  const getColor = (value: number) => {
+    if (value > 80) return 'var(--linear-error)';
+    if (value > 60) return 'var(--linear-warning)';
+    return 'var(--linear-success)';
+  };
+  
   return (
     <div className="grid grid-cols-3 gap-4">
       <div className="text-center">
-        <div className="text-2xl font-bold" style={{ color: cpuUsage > 80 ? '#ef4444' : '#4ade80' }}>
+        <div className="text-2xl font-bold" style={{ color: getColor(cpuUsage) }}>
           {cpuUsage}%
         </div>
-        <div className="text-xs text-gray-400">CPU</div>
+        <div className="text-xs" style={{ color: 'var(--linear-text-tertiary)' }}>CPU</div>
       </div>
       <div className="text-center">
-        <div className="text-2xl font-bold" style={{ color: memoryUsage > 80 ? '#ef4444' : '#06b6d4' }}>
+        <div className="text-2xl font-bold" style={{ color: getColor(memoryUsage) }}>
           {memoryUsage}%
         </div>
-        <div className="text-xs text-gray-400">Memory</div>
+        <div className="text-xs" style={{ color: 'var(--linear-text-tertiary)' }}>MEM</div>
       </div>
       <div className="text-center">
-        <div className="text-2xl font-bold text-[#ffd700]">{apiCalls}</div>
-        <div className="text-xs text-gray-400">API Calls</div>
+        <div className="text-2xl font-bold" style={{ color: 'var(--linear-brand-light)' }}>
+          {apiCalls.toLocaleString()}
+        </div>
+        <div className="text-xs" style={{ color: 'var(--linear-text-tertiary)' }}>API</div>
       </div>
     </div>
   );
 }
-
-// Activity log component
 export interface ActivityItem {
   id: string;
   time: string;
@@ -171,24 +177,26 @@ export interface ActivityItem {
 }
 
 export function ActivityFeed({ activities }: { activities: ActivityItem[] }) {
+  const getLevelColor = (level: string) => {
+    switch (level) {
+      case 'info': return 'var(--linear-success)';
+      case 'error': return 'var(--linear-error)';
+      case 'warn': return 'var(--linear-warning)';
+      default: return 'var(--linear-text-quaternary)';
+    }
+  };
+  
   return (
     <div className="space-y-2 max-h-48 overflow-y-auto">
       {activities.map((item) => (
-        <div key={item.id} className="flex items-center gap-3 py-1">
-          <span className="text-xs text-gray-500 w-10">{item.time}</span>
+        <div key={item.id} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-[var(--linear-hover)] transition-colors">
+          <span className="text-xs mono w-12" style={{ color: 'var(--linear-text-quaternary)' }}>{item.time}</span>
           <span
-            className={`w-2 h-2 rounded-full ${
-              item.level === 'info'
-                ? 'bg-[#4ade80]'
-                : item.level === 'error'
-                ? 'bg-[#ef4444]'
-                : item.level === 'warn'
-                ? 'bg-[#f59e0b]'
-                : 'bg-gray-500'
-            }`}
+            className="w-2 h-2 rounded-full"
+            style={{ backgroundColor: getLevelColor(item.level) }}
           />
-          <span className="text-sm truncate">{item.agent}</span>
-          <span className="text-sm text-gray-400 truncate">{item.action}</span>
+          <span className="text-sm font-medium truncate" style={{ color: 'var(--linear-text-primary)' }}>{item.agent}</span>
+          <span className="text-sm truncate" style={{ color: 'var(--linear-text-secondary)' }}>{item.action}</span>
         </div>
       ))}
     </div>

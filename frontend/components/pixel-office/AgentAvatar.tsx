@@ -124,15 +124,15 @@ export function AgentAvatar({
 function getStatusColor(status: AgentStatus): string {
   switch (status) {
     case 'ONLINE':
-      return '#4ade80';
+      return '#27a644';
     case 'BUSY':
       return '#f59e0b';
     case 'IDLE':
-      return '#06b6d4';
+      return '#8a8f98';
     case 'ERROR':
       return '#ef4444';
     case 'OFFLINE':
     default:
-      return '#6b7280';
+      return '#62666d';
   }
 }

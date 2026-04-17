@@ -19,10 +19,10 @@ interface Activity {
 type AgentStatus = 'ONLINE' | 'OFFLINE' | 'BUSY' | 'IDLE' | 'ERROR';
 
 const demoAgents: Array<{id: string; name: string; status: AgentStatus; color: string; task: string}> = [
-  { id: '1', name: 'Hermes Alpha', status: 'ONLINE', color: '#e94560', task: 'Researching' },
-  { id: '2', name: 'Hermes Beta', status: 'BUSY', color: '#4ade80', task: 'Coding' },
-  { id: '3', name: 'Hermes Gamma', status: 'IDLE', color: '#ffd700', task: 'Waiting' },
-  { id: '4', name: 'Hermes Delta', status: 'OFFLINE', color: '#0f3460', task: 'Offline' },
+  { id: '1', name: 'Hermes Alpha', status: 'ONLINE', color: '#27a644', task: 'Researching' },
+  { id: '2', name: 'Hermes Beta', status: 'BUSY', color: '#f59e0b', task: 'Coding' },
+  { id: '3', name: 'Hermes Gamma', status: 'IDLE', color: '#8a8f98', task: 'Waiting' },
+  { id: '4', name: 'Hermes Delta', status: 'OFFLINE', color: '#62666d', task: 'Offline' },
   { id: '5', name: 'Hermes Epsilon', status: 'ERROR', color: '#ef4444', task: 'Error' },
 ];
 
@@ -45,7 +45,6 @@ const initialActivities: ActivityItem[] = [
 
 function DashboardContent() {
   const { t } = useI18n();
-  const { theme } = useTheme();
   
   const [stats, setStats] = useState({ online: 2, busy: 1, idle: 1, offline: 1 });
   
@@ -103,96 +102,134 @@ function DashboardContent() {
   }, [liveMetrics.cpu, liveMetrics.memory, liveMetrics.calls]);
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'var(--pixel-bg)' }}>
-      {/* Header */}
-      <header className="p-6 border-b" style={{ borderColor: 'var(--pixel-border)' }}>
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold" style={{ color: 'var(--foreground)' }}>{t('app.title')}</h1>
-            <p className="mt-1" style={{ color: 'var(--pixel-text-secondary)' }}>{t('app.subtitle')}</p>
+    <div className="min-h-screen" style={{ backgroundColor: 'var(--linear-bg)' }}>
+      {/* Linear Header */}
+      <header className="border-b sticky top-0 z-50" style={{ 
+        borderColor: 'var(--linear-border-subtle)',
+        backgroundColor: 'var(--linear-surface)'
+      }}>
+        <div className="container flex justify-between items-center py-4">
+          <div className="flex items-center gap-3">
+            {/* Logo Mark */}
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+              style={{ background: 'linear-gradient(135deg, var(--linear-brand), var(--linear-brand-light))' }}>
+              <span className="text-white font-bold text-sm">H</span>
+            </div>
+            <div>
+              <h1 className="text-lg font-medium" style={{ color: 'var(--linear-text-primary)' }}>
+                {t('app.title')}
+              </h1>
+              <p className="text-xs" style={{ color: 'var(--linear-text-tertiary)' }}>
+                {t('app.subtitle')}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-4">
-            <Settings />
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: 'var(--pixel-online)' }} />
-              <span className="text-sm" style={{ color: 'var(--pixel-text-secondary)' }}>{t('app.live')}</span>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-md"
+              style={{ backgroundColor: 'var(--linear-button-bg)', border: '1px solid var(--linear-border-standard)' }}>
+              <span className="status-dot status-online animate-pulse-soft"></span>
+              <span className="text-xs font-medium" style={{ color: 'var(--linear-text-secondary)' }}>
+                {t('app.live')}
+              </span>
             </div>
+            <Settings />
           </div>
         </div>
       </header>
 
-      <main className="p-6 space-y-6">
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard label={t('stats.online')} value={stats.online} color="var(--pixel-online)" />
-          <StatCard label={t('stats.busy')} value={stats.busy} color="var(--pixel-busy)" />
-          <StatCard label={t('stats.idle')} value={stats.idle} color="var(--pixel-secondary)" />
-          <StatCard label={t('stats.offline')} value={stats.offline} color="var(--pixel-offline)" />
+      <main className="container py-8 space-y-8">
+        {/* Stats Grid - Linear style */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatCard 
+            label={t('stats.online')} 
+            value={stats.online} 
+            color="var(--linear-success)" 
+            icon={<span className="status-dot status-online"></span>}
+          />
+          <StatCard 
+            label={t('stats.busy')} 
+            value={stats.busy} 
+            color="var(--linear-warning)" 
+            icon={<span className="status-dot status-busy"></span>}
+          />
+          <StatCard 
+            label={t('stats.idle')} 
+            value={stats.idle} 
+            color="var(--linear-text-tertiary)" 
+            icon={<span className="status-dot status-idle"></span>}
+          />
+          <StatCard 
+            label={t('stats.offline')} 
+            value={stats.offline} 
+            color="var(--linear-text-quaternary)" 
+            icon={<span className="status-dot status-offline"></span>}
+          />
         </div>
 
-        {/* Charts Row */}
-        <div className="grid md:grid-cols-3 gap-6">
+        {/* Charts Row - Linear grid */}
+        <div className="grid md:grid-cols-3 gap-4">
           {/* System Metrics */}
-          <div className="glass-card p-4">
-            <h3 className="text-lg font-bold mb-4" style={{ color: 'var(--foreground)' }}>
+          <div className="linear-card p-5">
+            <h3 className="text-sm font-medium mb-4" style={{ color: 'var(--linear-text-primary)' }}>
               {t('dashboard.systemMetrics')}
             </h3>
-            <PixelChart 
-              data={metrics.cpu} 
-              color="var(--pixel-online)" 
-              height={50} 
-              label={t('metrics.cpu')} 
-              maxValue={100}
-            />
-            <div className="mt-2" />
-            <PixelChart 
-              data={metrics.memory} 
-              color="var(--pixel-secondary)" 
-              height={50} 
-              label={t('metrics.memory')}
-              maxValue={100}
-            />
+            <div className="space-y-4">
+              <PixelChart 
+                data={metrics.cpu} 
+                color="var(--linear-brand-light)" 
+                height={40} 
+                label={t('metrics.cpu')} 
+                maxValue={100}
+              />
+              <PixelChart 
+                data={metrics.memory} 
+                color="var(--linear-text-tertiary)" 
+                height={40} 
+                label={t('metrics.memory')}
+                maxValue={100}
+              />
+            </div>
           </div>
 
           {/* Task Distribution */}
-          <div className="glass-card p-4">
-            <h3 className="text-lg font-bold mb-4" style={{ color: 'var(--foreground)' }}>
+          <div className="linear-card p-5">
+            <h3 className="text-sm font-medium mb-4" style={{ color: 'var(--linear-text-primary)' }}>
               {t('dashboard.taskDistribution')}
             </h3>
-            <div className="flex justify-center">
+            <div className="flex justify-center mb-4">
               <DonutChart
                 data={[
-                  { label: t('tasks.completed'), value: metrics.tasks.completed, color: 'var(--pixel-online)' },
-                  { label: t('tasks.pending'), value: metrics.tasks.pending, color: 'var(--pixel-busy)' },
-                  { label: t('tasks.running'), value: metrics.tasks.running, color: 'var(--pixel-secondary)' },
-                  { label: t('tasks.failed'), value: metrics.tasks.failed, color: 'var(--pixel-error)' },
+                  { label: t('tasks.completed'), value: metrics.tasks.completed, color: 'var(--linear-success)' },
+                  { label: t('tasks.pending'), value: metrics.tasks.pending, color: 'var(--linear-warning)' },
+                  { label: t('tasks.running'), value: metrics.tasks.running, color: 'var(--linear-text-tertiary)' },
+                  { label: t('tasks.failed'), value: metrics.tasks.failed, color: 'var(--linear-error)' },
                 ]}
-                size={120}
+                size={100}
               />
             </div>
-            <div className="grid grid-cols-2 gap-2 mt-4 text-sm">
+            <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded" style={{ backgroundColor: 'var(--pixel-online)' }} />
-                <span>{t('tasks.completed')} ({metrics.tasks.completed})</span>
+                <span className="w-2 h-2 rounded" style={{ backgroundColor: 'var(--linear-success)' }} />
+                <span style={{ color: 'var(--linear-text-secondary)' }}>{t('tasks.completed')} ({metrics.tasks.completed})</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded" style={{ backgroundColor: 'var(--pixel-busy)' }} />
-                <span>{t('tasks.pending')} ({metrics.tasks.pending})</span>
+                <span className="w-2 h-2 rounded" style={{ backgroundColor: 'var(--linear-warning)' }} />
+                <span style={{ color: 'var(--linear-text-secondary)' }}>{t('tasks.pending')} ({metrics.tasks.pending})</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded" style={{ backgroundColor: 'var(--pixel-secondary)' }} />
-                <span>{t('tasks.running')} ({metrics.tasks.running})</span>
+                <span className="w-2 h-2 rounded" style={{ backgroundColor: 'var(--linear-text-tertiary)' }} />
+                <span style={{ color: 'var(--linear-text-secondary)' }}>{t('tasks.running')} ({metrics.tasks.running})</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded" style={{ backgroundColor: 'var(--pixel-error)' }} />
-                <span>{t('tasks.failed')} ({metrics.tasks.failed})</span>
+                <span className="w-2 h-2 rounded" style={{ backgroundColor: 'var(--linear-error)' }} />
+                <span style={{ color: 'var(--linear-text-secondary)' }}>{t('tasks.failed')} ({metrics.tasks.failed})</span>
               </div>
             </div>
           </div>
 
           {/* Live Statistics */}
-          <div className="glass-card p-4">
-            <h3 className="text-lg font-bold mb-4" style={{ color: 'var(--foreground)' }}>
+          <div className="linear-card p-5">
+            <h3 className="text-sm font-medium mb-4" style={{ color: 'var(--linear-text-primary)' }}>
               {t('dashboard.liveStatistics')}
             </h3>
             <MetricsDisplay
@@ -200,48 +237,68 @@ function DashboardContent() {
               memoryUsage={Math.round(liveMetrics.memory)}
               apiCalls={liveMetrics.calls}
             />
-            <div className="mt-4 pt-4" style={{ borderColor: 'var(--pixel-border)', borderTopWidth: 1 }}>
-              <div className="text-sm" style={{ color: 'var(--pixel-text-secondary)' }}>
-                {t('metrics.totalCalls')}: <span style={{ color: 'var(--pixel-accent)' }}>{metrics.totalApiCalls}</span>
+            <div className="mt-4 pt-4 border-t" style={{ borderColor: 'var(--linear-border-subtle)' }}>
+              <div className="text-xs" style={{ color: 'var(--linear-text-tertiary)' }}>
+                <span className="mono">{t('metrics.totalCalls')}: </span>
+                <span style={{ color: 'var(--linear-brand-light)' }}>{metrics.totalApiCalls.toLocaleString()}</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Office Grid */}
+        {/* Office Grid - Agent Cards */}
         <section>
-          <h2 className="text-xl font-bold mb-4 flex items-center gap-2" style={{ color: 'var(--foreground)' }}>
-            <span className="w-3 h-3 rounded-full animate-pulse" style={{ backgroundColor: 'var(--pixel-online)' }} />
-            {t('dashboard.officeFloor')}
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-medium flex items-center gap-2" style={{ 
+              color: 'var(--linear-text-tertiary)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em'
+            }}>
+              <span className="status-dot status-online animate-pulse-soft"></span>
+              {t('dashboard.officeFloor')}
+            </h2>
+            <span className="text-xs" style={{ color: 'var(--linear-text-quaternary)' }}>5 agents</span>
+          </div>
           
-          <div className="glass-card p-6">
-            <div className="grid grid-cols-3 md:grid-cols-5 gap-6">
+          <div className="linear-card p-5">
+            <div className="grid grid-cols-3 md:grid-cols-5 gap-4">
               {demoAgents.map((agent) => (
                 <div
                   key={agent.id}
-                  className="flex flex-col items-center p-4 rounded-lg cursor-pointer transition-all hover:scale-105"
+                  className="flex flex-col items-center p-4 rounded-lg cursor-pointer transition-all hover:bg-[var(--linear-hover)]"
                   style={{ 
-                    backgroundColor: 'var(--pixel-card)',
+                    backgroundColor: agent.status === 'ONLINE' ? 'rgba(39, 166, 68, 0.05)' : 'transparent',
                   }}
                 >
                   <AgentAvatar
                     name={agent.name}
                     status={agent.status}
                     color={agent.color}
-                    size={80}
+                    size={64}
                     showName={false}
                   />
-                  <div className="mt-2 text-center">
-                    <div className="font-medium text-sm">{agent.name}</div>
-                    <div className={`text-xs mt-1 ${
+                  <div className="mt-3 text-center w-full">
+                    <div className="text-sm font-medium truncate" style={{ color: 'var(--linear-text-primary)' }}>
+                      {agent.name.replace('Hermes ', '')}
+                    </div>
+                    <div className={`text-xs mt-1 flex items-center justify-center gap-1.5 ${
                       agent.status === 'ONLINE' ? 'status-online' :
                       agent.status === 'BUSY' ? 'status-busy' :
                       agent.status === 'ERROR' ? 'status-error' :
-                      agent.status === 'IDLE' ? 'text-cyan-400' :
+                      agent.status === 'IDLE' ? 'text-[var(--linear-text-tertiary)]' :
                       'status-offline'
                     }`}>
+                      <span className={`status-dot ${
+                        agent.status === 'ONLINE' ? 'status-online' :
+                        agent.status === 'BUSY' ? 'status-busy' :
+                        agent.status === 'ERROR' ? 'status-error' :
+                        agent.status === 'IDLE' ? 'status-idle' :
+                        'status-offline'
+                      }`}></span>
                       {agent.status}
+                    </div>
+                    <div className="text-xs mt-1 truncate" style={{ color: 'var(--linear-text-quaternary)' }}>
+                      {agent.task}
                     </div>
                   </div>
                 </div>
@@ -252,10 +309,14 @@ function DashboardContent() {
 
         {/* Activity Feed */}
         <section>
-          <h2 className="text-xl font-bold mb-4" style={{ color: 'var(--foreground)' }}>
+          <h2 className="text-sm font-medium mb-4" style={{ 
+            color: 'var(--linear-text-tertiary)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em'
+          }}>
             {t('dashboard.recentActivity')}
           </h2>
-          <div className="glass-card p-4 max-h-64 overflow-y-auto">
+          <div className="linear-card p-4 max-h-64 overflow-y-auto">
             <ActivityFeed activities={activities} />
           </div>
         </section>
@@ -264,11 +325,14 @@ function DashboardContent() {
   );
 }
 
-function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
+function StatCard({ label, value, color, icon }: { label: string; value: number; color: string; icon?: React.ReactNode }) {
   return (
-    <div className="glass-card p-4">
-      <div className="text-3xl font-bold glow-text" style={{ color }}>{value}</div>
-      <div className="text-sm" style={{ color: 'var(--pixel-text-secondary)' }}>{label}</div>
+    <div className="linear-card p-4">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-medium" style={{ color: 'var(--linear-text-secondary)' }}>{label}</span>
+        {icon}
+      </div>
+      <div className="text-2xl font-semibold" style={{ color }}>{value}</div>
     </div>
   );
 }
