@@ -1,8 +1,9 @@
 @import "tailwindcss";
 
 :root {
+  /* Dark Theme (Default) */
   --pixel-bg: #1a1a2e;
-  --pixel-grid: #16213e;
+  --pixel-bg-secondary: #16213e;
   --pixel-primary: #e94560;
   --pixel-secondary: #0f3460;
   --pixel-accent: #ffd700;
@@ -10,9 +11,34 @@
   --pixel-offline: #6b7280;
   --pixel-busy: #f59e0b;
   --pixel-error: #ef4444;
+  --pixel-text: #f8fafc;
+  --pixel-text-secondary: #94a3b8;
+  --pixel-border: rgba(255, 255, 255, 0.1);
+  --pixel-card: rgba(255, 255, 255, 0.05);
+  --pixel-card-hover: rgba(255, 255, 255, 0.08);
   
   --background: var(--pixel-bg);
-  --foreground: #f8fafc;
+  --foreground: var(--pixel-text);
+}
+
+[data-theme="light"] {
+  --pixel-bg: #f8fafc;
+  --pixel-bg-secondary: #e2e8f0;
+  --pixel-primary: #dc2626;
+  --pixel-secondary: #3b82f6;
+  --pixel-accent: #f59e0b;
+  --pixel-online: #16a34a;
+  --pixel-offline: #9ca3af;
+  --pixel-busy: #d97706;
+  --pixel-error: #dc2626;
+  --pixel-text: #1e293b;
+  --pixel-text-secondary: #64748b;
+  --pixel-border: rgba(0, 0, 0, 0.1);
+  --pixel-card: rgba(255, 255, 255, 0.8);
+  --pixel-card-hover: rgba(255, 255, 255, 0.95);
+  
+  --background: var(--pixel-bg);
+  --foreground: var(--pixel-text);
 }
 
 * {
@@ -22,10 +48,11 @@
 }
 
 body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
   background: var(--pixel-bg);
   color: var(--foreground);
   min-height: 100vh;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 /* Pixel-style animations */
@@ -39,6 +66,11 @@ body {
   50% { transform: translateY(-5px); }
 }
 
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .pixel-animate {
   animation: pixel-pulse 2s steps(4) infinite;
 }
@@ -47,12 +79,23 @@ body {
   animation: float 3s ease-in-out infinite;
 }
 
+.spin-animate {
+  animation: spin-slow 20s linear infinite;
+}
+
 /* Glassmorphism card */
 .glass-card {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--pixel-card);
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  border: 1px solid var(--pixel-border);
+  border-radius: 16px;
+  transition: all 0.3s ease;
+}
+
+.glass-card:hover {
+  background: var(--pixel-card-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
 }
 
 /* Status colors */
@@ -61,7 +104,68 @@ body {
 .status-busy { color: var(--pixel-busy); }
 .status-error { color: var(--pixel-error); }
 
-.bg-status-online { background-color: var(--pixel-online); }
-.bg-status-offline { background-color: var(--pixel-offline); }
-.bg-status-busy { background-color: var(--pixel-busy); }
-.bg-status-error { background-color: var(--pixel-error); }
+/* Gradient backgrounds */
+.bg-gradient-primary {
+  background: linear-gradient(135deg, var(--pixel-primary), var(--pixel-secondary));
+}
+
+.bg-gradient-accent {
+  background: linear-gradient(135deg, var(--pixel-accent), var(--pixel-busy));
+}
+
+/* Text shadows for dark theme glow effect */
+[data-theme="dark"] .glow-text {
+  text-shadow: 0 0 10px currentColor;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--pixel-bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--pixel-text-secondary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--pixel-text);
+}
+
+/* Button styles */
+.btn-primary {
+  background: linear-gradient(135deg, var(--pixel-primary), #c5304b);
+  color: white;
+  border: none;
+  padding: 0.5rem 1.5rem;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(233, 69, 96, 0.4);
+}
+
+/* Input styles */
+input, textarea, select {
+  background: var(--pixel-card);
+  border: 1px solid var(--pixel-border);
+  color: var(--foreground);
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  transition: all 0.2s ease;
+}
+
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: var(--pixel-primary);
+  box-shadow: 0 0 0 3px var(--pixel-primary)/20;
+}

@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { AgentAvatar } from '@/components/pixel-office/AgentAvatar';
 import { PixelChart, DonutChart, MetricsDisplay, ActivityFeed, ActivityItem } from '@/components/pixel-office/Charts';
+import { useTheme, useI18n } from '@/components/providers/ThemeProvider';
+import { Settings } from '@/components/ui/Settings';
 
 // Activity item type
 interface Activity {
@@ -13,7 +15,7 @@ interface Activity {
   level: 'info' | 'warn' | 'error' | 'idle';
 }
 
-// Demo agent data (simulating API response)
+// Demo agent data
 type AgentStatus = 'ONLINE' | 'OFFLINE' | 'BUSY' | 'IDLE' | 'ERROR';
 
 const demoAgents: Array<{id: string; name: string; status: AgentStatus; color: string; task: string}> = [
@@ -26,14 +28,13 @@ const demoAgents: Array<{id: string; name: string; status: AgentStatus; color: s
 
 // Generate fixed historical data for SSR consistency
 function generateHistoricalData(base: number, variance: number, points: number): number[] {
-  // Use fixed seed for consistent SSR/client rendering
   return Array.from({ length: points }, (_, i) => {
     const seed = (i * 17 + base * 7) % 100;
     return Math.max(0, Math.min(100, seed));
   });
 }
 
-// Initial activities - fixed data
+// Initial activities
 const initialActivities: ActivityItem[] = [
   { id: '1', time: '14:32', agent: 'Hermes Alpha', action: 'completed research task', level: 'info' },
   { id: '2', time: '14:28', agent: 'Hermes Beta', action: 'started code generation', level: 'info' },
@@ -42,8 +43,10 @@ const initialActivities: ActivityItem[] = [
   { id: '5', time: '13:45', agent: 'Hermes Delta', action: 'went offline', level: 'idle' },
 ];
 
-export default function DashboardPage() {
-  const [agents, setAgents] = useState(demoAgents);
+function DashboardContent() {
+  const { t } = useI18n();
+  const { theme } = useTheme();
+  
   const [stats, setStats] = useState({ online: 2, busy: 1, idle: 1, offline: 1 });
   
   // Real-time metrics state
@@ -61,14 +64,12 @@ export default function DashboardPage() {
   // Simulate real-time updates (client-only)
   useEffect(() => {
     const interval = setInterval(() => {
-      // Update live metrics with small variations
       setLiveMetrics((prev) => ({
         cpu: Math.max(10, Math.min(95, prev.cpu + (Math.random() - 0.5) * 20)),
         memory: Math.max(30, Math.min(90, prev.memory + (Math.random() - 0.5) * 10)),
         calls: prev.calls + Math.floor(Math.random() * 5),
       }));
 
-      // Update historical data
       setMetrics((prev) => ({
         ...prev,
         cpu: [...prev.cpu.slice(1), Math.round(liveMetrics.cpu)],
@@ -76,7 +77,6 @@ export default function DashboardPage() {
         totalApiCalls: liveMetrics.calls,
       }));
 
-      // Randomly add new activity occasionally
       if (Math.random() > 0.7) {
         const agentsList = ['Hermes Alpha', 'Hermes Beta', 'Hermes Gamma'];
         const actionTypes = [
@@ -103,17 +103,20 @@ export default function DashboardPage() {
   }, [liveMetrics.cpu, liveMetrics.memory, liveMetrics.calls]);
 
   return (
-    <div className="min-h-screen bg-[#1a1a2e] text-white">
+    <div className="min-h-screen" style={{ backgroundColor: 'var(--pixel-bg)' }}>
       {/* Header */}
-      <header className="p-6 border-b border-gray-800">
+      <header className="p-6 border-b" style={{ borderColor: 'var(--pixel-border)' }}>
         <div className="flex justify-between items-center">
           <div>
-            <h1 className="text-3xl font-bold">Hermes Agent Office</h1>
-            <p className="text-gray-400 mt-1">Pixel-style AI Agent Monitoring</p>
+            <h1 className="text-3xl font-bold" style={{ color: 'var(--foreground)' }}>{t('app.title')}</h1>
+            <p className="mt-1" style={{ color: 'var(--pixel-text-secondary)' }}>{t('app.subtitle')}</p>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 bg-[#4ade80] rounded-full animate-pulse" />
-            <span className="text-sm text-gray-400">Live</span>
+          <div className="flex items-center gap-4">
+            <Settings />
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: 'var(--pixel-online)' }} />
+              <span className="text-sm" style={{ color: 'var(--pixel-text-secondary)' }}>{t('app.live')}</span>
+            </div>
           </div>
         </div>
       </header>
@@ -121,79 +124,85 @@ export default function DashboardPage() {
       <main className="p-6 space-y-6">
         {/* Stats Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard label="Online" value={stats.online} color="#4ade80" />
-          <StatCard label="Busy" value={stats.busy} color="#f59e0b" />
-          <StatCard label="Idle" value={stats.idle} color="#06b6d4" />
-          <StatCard label="Offline" value={stats.offline} color="#6b7280" />
+          <StatCard label={t('stats.online')} value={stats.online} color="var(--pixel-online)" />
+          <StatCard label={t('stats.busy')} value={stats.busy} color="var(--pixel-busy)" />
+          <StatCard label={t('stats.idle')} value={stats.idle} color="var(--pixel-secondary)" />
+          <StatCard label={t('stats.offline')} value={stats.offline} color="var(--pixel-offline)" />
         </div>
 
         {/* Charts Row */}
         <div className="grid md:grid-cols-3 gap-6">
-          {/* CPU & Memory Charts */}
+          {/* System Metrics */}
           <div className="glass-card p-4">
-            <h3 className="text-lg font-bold mb-4">System Metrics</h3>
+            <h3 className="text-lg font-bold mb-4" style={{ color: 'var(--foreground)' }}>
+              {t('dashboard.systemMetrics')}
+            </h3>
             <PixelChart 
               data={metrics.cpu} 
-              color="#4ade80" 
+              color="var(--pixel-online)" 
               height={50} 
-              label="CPU Usage %" 
+              label={t('metrics.cpu')} 
               maxValue={100}
             />
             <div className="mt-2" />
             <PixelChart 
               data={metrics.memory} 
-              color="#06b6d4" 
+              color="var(--pixel-secondary)" 
               height={50} 
-              label="Memory Usage %"
+              label={t('metrics.memory')}
               maxValue={100}
             />
           </div>
 
           {/* Task Distribution */}
           <div className="glass-card p-4">
-            <h3 className="text-lg font-bold mb-4">Task Distribution</h3>
+            <h3 className="text-lg font-bold mb-4" style={{ color: 'var(--foreground)' }}>
+              {t('dashboard.taskDistribution')}
+            </h3>
             <div className="flex justify-center">
               <DonutChart
                 data={[
-                  { label: 'Completed', value: metrics.tasks.completed, color: '#4ade80' },
-                  { label: 'Pending', value: metrics.tasks.pending, color: '#f59e0b' },
-                  { label: 'Running', value: metrics.tasks.running, color: '#06b6d4' },
-                  { label: 'Failed', value: metrics.tasks.failed, color: '#ef4444' },
+                  { label: t('tasks.completed'), value: metrics.tasks.completed, color: 'var(--pixel-online)' },
+                  { label: t('tasks.pending'), value: metrics.tasks.pending, color: 'var(--pixel-busy)' },
+                  { label: t('tasks.running'), value: metrics.tasks.running, color: 'var(--pixel-secondary)' },
+                  { label: t('tasks.failed'), value: metrics.tasks.failed, color: 'var(--pixel-error)' },
                 ]}
                 size={120}
               />
             </div>
-            <div className="grid grid-cols-2 gap-2 mt-4 text-xs">
+            <div className="grid grid-cols-2 gap-2 mt-4 text-sm">
               <div className="flex items-center gap-2">
-                <span className="w-3 h-3 bg-[#4ade80]" />
-                <span>Completed ({metrics.tasks.completed})</span>
+                <span className="w-3 h-3 rounded" style={{ backgroundColor: 'var(--pixel-online)' }} />
+                <span>{t('tasks.completed')} ({metrics.tasks.completed})</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-3 h-3 bg-[#f59e0b]" />
-                <span>Pending ({metrics.tasks.pending})</span>
+                <span className="w-3 h-3 rounded" style={{ backgroundColor: 'var(--pixel-busy)' }} />
+                <span>{t('tasks.pending')} ({metrics.tasks.pending})</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-3 h-3 bg-[#06b6d4]" />
-                <span>Running ({metrics.tasks.running})</span>
+                <span className="w-3 h-3 rounded" style={{ backgroundColor: 'var(--pixel-secondary)' }} />
+                <span>{t('tasks.running')} ({metrics.tasks.running})</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-3 h-3 bg-[#ef4444]" />
-                <span>Failed ({metrics.tasks.failed})</span>
+                <span className="w-3 h-3 rounded" style={{ backgroundColor: 'var(--pixel-error)' }} />
+                <span>{t('tasks.failed')} ({metrics.tasks.failed})</span>
               </div>
             </div>
           </div>
 
-          {/* Live Metrics */}
+          {/* Live Statistics */}
           <div className="glass-card p-4">
-            <h3 className="text-lg font-bold mb-4">Live Statistics</h3>
+            <h3 className="text-lg font-bold mb-4" style={{ color: 'var(--foreground)' }}>
+              {t('dashboard.liveStatistics')}
+            </h3>
             <MetricsDisplay
               cpuUsage={Math.round(liveMetrics.cpu)}
               memoryUsage={Math.round(liveMetrics.memory)}
               apiCalls={liveMetrics.calls}
             />
-            <div className="mt-4 pt-4 border-t border-gray-800">
-              <div className="text-sm text-gray-400">
-                Total API Calls: <span className="text-[#ffd700]">{metrics.totalApiCalls}</span>
+            <div className="mt-4 pt-4" style={{ borderColor: 'var(--pixel-border)', borderTopWidth: 1 }}>
+              <div className="text-sm" style={{ color: 'var(--pixel-text-secondary)' }}>
+                {t('metrics.totalCalls')}: <span style={{ color: 'var(--pixel-accent)' }}>{metrics.totalApiCalls}</span>
               </div>
             </div>
           </div>
@@ -201,17 +210,20 @@ export default function DashboardPage() {
 
         {/* Office Grid */}
         <section>
-          <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-            <span className="w-3 h-3 bg-[#4ade80] rounded-full animate-pulse" />
-            Office Floor
+          <h2 className="text-xl font-bold mb-4 flex items-center gap-2" style={{ color: 'var(--foreground)' }}>
+            <span className="w-3 h-3 rounded-full animate-pulse" style={{ backgroundColor: 'var(--pixel-online)' }} />
+            {t('dashboard.officeFloor')}
           </h2>
           
           <div className="glass-card p-6">
             <div className="grid grid-cols-3 md:grid-cols-5 gap-6">
-              {agents.map((agent) => (
+              {demoAgents.map((agent) => (
                 <div
                   key={agent.id}
-                  className="flex flex-col items-center p-4 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+                  className="flex flex-col items-center p-4 rounded-lg cursor-pointer transition-all hover:scale-105"
+                  style={{ 
+                    backgroundColor: 'var(--pixel-card)',
+                  }}
                 >
                   <AgentAvatar
                     name={agent.name}
@@ -223,11 +235,11 @@ export default function DashboardPage() {
                   <div className="mt-2 text-center">
                     <div className="font-medium text-sm">{agent.name}</div>
                     <div className={`text-xs mt-1 ${
-                      agent.status === 'ONLINE' ? 'text-[#4ade80]' :
-                      agent.status === 'BUSY' ? 'text-[#f59e0b]' :
-                      agent.status === 'ERROR' ? 'text-[#ef4444]' :
-                      agent.status === 'IDLE' ? 'text-[#06b6d4]' :
-                      'text-gray-500'
+                      agent.status === 'ONLINE' ? 'status-online' :
+                      agent.status === 'BUSY' ? 'status-busy' :
+                      agent.status === 'ERROR' ? 'status-error' :
+                      agent.status === 'IDLE' ? 'text-cyan-400' :
+                      'status-offline'
                     }`}>
                       {agent.status}
                     </div>
@@ -240,8 +252,10 @@ export default function DashboardPage() {
 
         {/* Activity Feed */}
         <section>
-          <h2 className="text-xl font-bold mb-4">Recent Activity</h2>
-          <div className="glass-card p-4">
+          <h2 className="text-xl font-bold mb-4" style={{ color: 'var(--foreground)' }}>
+            {t('dashboard.recentActivity')}
+          </h2>
+          <div className="glass-card p-4 max-h-64 overflow-y-auto">
             <ActivityFeed activities={activities} />
           </div>
         </section>
@@ -253,8 +267,12 @@ export default function DashboardPage() {
 function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div className="glass-card p-4">
-      <div className="text-3xl font-bold" style={{ color }}>{value}</div>
-      <div className="text-sm text-gray-400">{label}</div>
+      <div className="text-3xl font-bold glow-text" style={{ color }}>{value}</div>
+      <div className="text-sm" style={{ color: 'var(--pixel-text-secondary)' }}>{label}</div>
     </div>
   );
+}
+
+export default function DashboardPage() {
+  return <DashboardContent />;
 }

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
+import { useTheme } from '@/components/providers/ThemeProvider';
 
 // Canvas-based pixel chart component
 interface PixelChartProps {
@@ -23,8 +24,8 @@ function PixelChart({ data, maxValue = 100, color, height = 60, label }: PixelCh
     const width = canvas.width;
     const chartHeight = canvas.height;
 
-    // Clear
-    ctx.fillStyle = 'rgba(26, 26, 46, 0.8)';
+    // Clear with theme color
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--pixel-bg-secondary').trim() || 'rgba(26, 26, 46, 0.8)';
     ctx.fillRect(0, 0, width, chartHeight);
 
     // Draw grid lines
@@ -58,7 +59,7 @@ function PixelChart({ data, maxValue = 100, color, height = 60, label }: PixelCh
 
   return (
     <div className="flex flex-col gap-1">
-      {label && <div className="text-xs text-gray-400">{label}</div>}
+      {label && <div className="text-xs" style={{ color: 'var(--pixel-text-secondary)' }}>{label}</div>}
       <canvas
         ref={canvasRef}
         width={200}
