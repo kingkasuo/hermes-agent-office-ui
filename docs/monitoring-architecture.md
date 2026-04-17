@@ -99,17 +99,59 @@
 
 ## 模块设计
 
+### 0. 项目结构
+
+```
+hermes-agent-office-ui/
+├── backend/
+│   ├── src/
+│   │   ├── app/api/           # Next.js API 路由
+│   │   │   ├── agents/        # Agent CRUD API
+│   │   │   ├── tasks/         # 任务管理 API
+│   │   │   ├── logs/          # 日志查询 API
+│   │   │   ├── hermes/        # Hermes CLI 数据接口
+│   │   │   └── pixel-office/  # 像素办公室数据接口
+│   │   ├── lib/
+│   │   │   ├── prisma.ts          # Prisma 客户端
+│   │   │   ├── hermes-client.ts   # CLI 执行器
+│   │   │   ├── memory-store.ts    # 内存缓存
+│   │   │   └── websocket-server.ts # WebSocket 服务
+│   │   └── server/
+│   │       ├── monitor-service.ts  # 主监控服务
+│   │       ├── agent-monitor.ts    # Agent 监控
+│   │       └── log-collector.ts    # 日志收集器
+│   ├── prisma/
+│   │   └── schema.prisma     # 数据库 Schema
+│   └── server.ts             # 自定义服务器启动
+├── frontend/
+│   ├── app/                  # Next.js 页面
+│   ├── components/           # React 组件
+│   ├── hooks/                # 自定义 Hooks
+│   │   ├── useWebSocket.ts   # WebSocket 连接
+│   │   ├── useAgents.ts      # Agent 数据
+│   │   └── useTasks.ts       # 任务数据
+│   └── lib/
+│       ├── api.ts            # API 客户端
+│       └── websocket-client.ts
+└── shared/                   # 共享代码
+    ├── types/                # TypeScript 类型
+    └── constants/            # 常量定义
+```
+
+---
+
 ### 1. CLI 客户端层 (hermes-client.ts)
 
-封装所有 Hermes CLI 命令调用：
+封装所有 Hermes CLI 命令调用，负责与本地安装的 Hermes CLI 交互：
 
 ```typescript
 // 核心接口
 interface HermesClient {
   // 系统状态
-  getStatus(): Promise<HermesSystemStatus>;
-  getConfig(): Promise<HermesConfig>;
-  getVersion(): Promise<string>;
+  getHermesStatus(): Promise<HermesSystemStatus>;
+  getHermesConfig(): Promise<HermesConfig>;
+  getHermesVersion(): Promise<string>;
+  isHermesInstalled(): Promise<boolean>;
 
   // 认证与模型
   getAuthProviders(): Promise<AuthProvider[]>;
@@ -117,18 +159,41 @@ interface HermesClient {
 
   // Gateway
   getGatewayStatus(): Promise<GatewayStatus>;
-  getActiveGateways(): Promise<Gateway[]>;
 
   // 会话
   getSessions(): Promise<HermesSession[]>;
-  getSessionDetail(sessionId: string): Promise<HermesSessionDetail>;
-  exportSession(sessionId: string): Promise<SessionMessages[]>;
+  exportSession(sessionId: string): Promise<HermesMessage[]>;
 
   // 洞察
-  getInsights(options?: { days?: number }): Promise<HermesInsights>;
+  getInsights(days?: number): Promise<HermesInsights>;
 
-  // 日志流
+  // 日志
+  getLogs(options?: LogStreamOptions): Promise<HermesLog[]>;
   createLogStream(options: LogStreamOptions): EventEmitter;
+}
+```
+
+**命令执行配置：**
+
+```typescript
+const EXEC_TIMEOUT = 30000;      // 30秒超时
+const MAX_BUFFER = 1024 * 1024;  // 1MB 输出缓冲区
+```
+
+**命令执行实现：**
+
+```typescript
+async function execHermesCommand(args: string): Promise<string> {
+  const command = `hermes ${args}`;
+  const { stdout, stderr } = await execAsync(command, {
+    timeout: EXEC_TIMEOUT,
+    maxBuffer: MAX_BUFFER,
+    env: {
+      ...process.env,
+      PATH: `${process.env.HOME}/.local/bin:/usr/local/bin:${process.env.PATH}`,
+    },
+  });
+  return stdout || '';
 }
 ```
 
@@ -287,155 +352,372 @@ interface PixelAgent {
 
 ---
 
-### 3. 监控服务层 (monitor-service.ts)
+### 3. 内存存储层 (memory-store.ts)
+
+内存缓存用于快速访问热点数据和 WebSocket 客户端管理：
 
 ```typescript
-class HermesMonitorService {
-  private cliClient: HermesClient;
-  private wsServer: WebSocketServer;
-  private memoryStore: MemoryStore;
+class MemoryStore {
+  // 系统状态缓存
+  private systemState: SystemState | null = null;
+  private hermesConfig: HermesConfig | null = null;
+  private gatewayStatus: GatewayStatus | null = null;
+  private insights: HermesInsights | null = null;
 
-  // 监控任务调度
-  private intervals: Map<string, NodeJS.Timeout> = new Map();
+  // Agent 和会话缓存
+  private agents: Map<string, PixelAgent> = new Map();
+  private sessions: Map<string, HermesSession> = new Map();
+  private hermesLogs: HermesLog[] = [];
 
-  // 启动所有监控任务
-  async start(): Promise<void> {
-    // 1. 系统状态监控 (30s)
-    this.schedule('system', () => this.updateSystemStatus(), 30000);
+  // WebSocket 客户端
+  private wsClients: Set<WebSocket> = new Set();
 
-    // 2. Gateway 监控 (30s)
-    this.schedule('gateway', () => this.updateGatewayStatus(), 30000);
+  // 缓存操作
+  setSystemState(state: SystemState): void { this.systemState = state; }
+  getSystemState(): SystemState | null { return this.systemState; }
 
-    // 3. 会话列表监控 (10s)
-    this.schedule('sessions', () => this.updateSessions(), 10000);
+  setAgent(agent: PixelAgent): void { this.agents.set(agent.id, agent); }
+  getAgent(id: string): PixelAgent | undefined { return this.agents.get(id); }
+  getAllAgents(): PixelAgent[] { return Array.from(this.agents.values()); }
 
-    // 4. 活跃会话详情监控 (5s)
-    this.schedule('sessionDetails', () => this.updateActiveSessionDetails(), 5000);
+  // 变化检测
+  detectAgentChanges(newAgents: PixelAgent[]): AgentChange[] {
+    const changes: AgentChange[] = [];
+    for (const newAgent of newAgents) {
+      const oldAgent = this.agents.get(newAgent.id);
+      if (!oldAgent) continue;
 
-    // 5. 洞察数据 (60s)
-    this.schedule('insights', () => this.updateInsights(), 60000);
+      // 检测状态变化
+      if (oldAgent.status !== newAgent.status) {
+        changes.push({
+          agentId: newAgent.id,
+          field: 'status',
+          oldValue: oldAgent.status,
+          newValue: newAgent.status,
+          timestamp: Date.now()
+        });
+      }
 
-    // 6. 日志流 (实时)
-    this.startLogStream();
+      // 检测活动变化
+      if (JSON.stringify(oldAgent.currentActivity) !==
+          JSON.stringify(newAgent.currentActivity)) {
+        changes.push({
+          agentId: newAgent.id,
+          field: 'currentActivity',
+          oldValue: oldAgent.currentActivity,
+          newValue: newAgent.currentActivity,
+          timestamp: Date.now()
+        });
+      }
+    }
+    return changes;
   }
 
-  // 更新系统状态并推送到前端
+  // WebSocket 客户端管理
+  addWsClient(ws: WebSocket): void { this.wsClients.add(ws); }
+  removeWsClient(ws: WebSocket): void { this.wsClients.delete(ws); }
+
+  broadcast(message: WebSocketMessage<unknown>): void {
+    const data = JSON.stringify(message);
+    for (const client of this.wsClients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(data);
+      }
+    }
+  }
+}
+
+export const memoryStore = new MemoryStore();
+```
+
+---
+
+### 4. 监控服务层 (monitor-service.ts)
+
+主监控服务，负责协调所有监控任务和事件分发：
+
+```typescript
+class MonitorService extends EventEmitter {
+  private isRunning = false;
+  private intervals: Map<string, NodeJS.Timeout> = new Map();
+  private logStream: EventEmitter | null = null;
+  private hermesInstalled = false;
+  private activeSessionIds: Set<string> = new Set();
+
+  // 监控配置
+  private readonly config = {
+    system: { interval: 30000 },      // 30s
+    gateway: { interval: 30000 },     // 30s
+    sessions: { interval: 10000 },    // 10s
+    sessionDetails: { interval: 5000 }, // 5s
+    insights: { interval: 60000 },    // 60s
+  };
+
+  async start(): Promise<void> {
+    if (this.isRunning) return;
+    this.isRunning = true;
+
+    // 检查 Hermes 安装
+    this.hermesInstalled = await isHermesInstalled();
+
+    // 初始化数据
+    await this.updateSystemStatus();
+    await this.updateGatewayStatus();
+    await this.updateSessions();
+
+    // 启动定时任务
+    this.schedule('system', () => this.updateSystemStatus(), this.config.system.interval);
+    this.schedule('gateway', () => this.updateGatewayStatus(), this.config.gateway.interval);
+    this.schedule('sessions', () => this.updateSessions(), this.config.sessions.interval);
+    this.schedule('sessionDetails', () => this.updateSessionDetails(), this.config.sessionDetails.interval);
+    this.schedule('insights', () => this.updateInsights(), this.config.insights.interval);
+
+    // 启动日志流
+    if (this.hermesInstalled) {
+      this.startLogStream();
+    }
+  }
+
+  // 任务调度器
+  private schedule(name: string, fn: () => Promise<void>, interval: number): void {
+    // 立即执行一次
+    fn().catch(err => console.error(`[${name}] Initial run failed:`, err));
+
+    // 设置定时器
+    const timer = setInterval(() => {
+      if (!this.isRunning) return;
+      fn().catch(err => console.error(`[${name}] Error:`, err));
+    }, interval);
+
+    this.intervals.set(name, timer);
+  }
+
+  stop(): void {
+    this.isRunning = false;
+
+    // 清除定时任务
+    for (const [name, interval] of this.intervals) {
+      clearInterval(interval);
+    }
+    this.intervals.clear();
+
+    // 停止日志流
+    if (this.logStream) {
+      (this.logStream as any).stop?.();
+      this.logStream = null;
+    }
+  }
+
+  // 更新系统状态
   private async updateSystemStatus(): Promise<void> {
-    const status = await this.cliClient.getStatus();
-    const config = await this.cliClient.getConfig();
+    if (!this.hermesInstalled) return;
+
+    const [status, config] = await Promise.all([
+      getHermesStatus(),
+      getHermesConfig(),
+    ]);
 
     const systemState: SystemState = {
       hermesVersion: status.version,
       model: config.model,
       authStatus: status.authStatus,
       components: status.components,
-      timestamp: Date.now()
+      gatewayStatus: memoryStore.getGatewayStatus() || { running: false, serviceType: 'none', connectedPlatforms: [] },
+      timestamp: Date.now(),
     };
 
-    // 更新内存
-    this.memoryStore.set('system', systemState);
+    memoryStore.setSystemState(systemState);
+    memoryStore.setHermesConfig(config);
 
     // 推送到前端
-    this.wsServer.broadcast({
-      type: 'system_update',
-      data: systemState
-    });
+    this.emit('system_update', systemState);
   }
 
-  // 更新会话并映射到像素 Agent
+  // 更新会话并映射为 Pixel Agents
   private async updateSessions(): Promise<void> {
-    const sessions = await this.cliClient.getSessions();
+    const sessions = await getSessions();
     const pixelAgents = this.mapSessionsToPixelAgents(sessions);
 
-    // 对比变化
-    const changes = this.detectAgentChanges(pixelAgents);
-
-    if (changes.length > 0) {
-      this.memoryStore.set('agents', pixelAgents);
-
-      // 推送变化到前端
-      this.wsServer.broadcast({
-        type: 'agents_update',
-        data: {
-          agents: pixelAgents,
-          changes
-        }
-      });
+    // 添加 Gateway Agent
+    const gatewayAgent = memoryStore.getAgent('gateway-main');
+    if (gatewayAgent) {
+      pixelAgents.push(gatewayAgent);
     }
+
+    // 检测变化
+    const changes = memoryStore.detectAgentChanges(pixelAgents);
+
+    // 更新内存
+    for (const agent of pixelAgents) {
+      memoryStore.setAgent(agent);
+    }
+
+    // 推送到前端
+    this.emit('agents_update', { agents: pixelAgents, changes });
   }
 
-  // 实时日志流
+  // 启动实时日志流
   private startLogStream(): void {
-    const logStream = this.cliClient.createLogStream({
+    this.logStream = createLogStream({
       follow: true,
       lines: 100,
-      level: 'INFO'
+      level: 'INFO',
     });
 
-    logStream.on('log', (log: HermesLog) => {
-      // 解析日志类型
-      const activity = this.parseLogToActivity(log);
-
-      // 更新对应 Agent 状态
-      this.updateAgentFromLog(activity);
+    this.logStream.on('log', (log: HermesLog) => {
+      // 存储日志
+      memoryStore.addHermesLog(log);
 
       // 推送到前端
-      this.wsServer.broadcast({
-        type: 'log',
-        data: log
-      });
+      this.emit('log', log);
 
-      // 如果是任务相关日志，推送任务更新
-      if (activity.type === 'task') {
-        this.wsServer.broadcast({
-          type: 'task_update',
-          data: activity
-        });
+      // 解析任务更新
+      const taskUpdate = this.parseLogToTaskUpdate(log);
+      if (taskUpdate) {
+        this.emit('task_update', taskUpdate);
+        this.updateAgentFromTask(taskUpdate);
       }
     });
   }
+
+  // 将会话映射为 Pixel Agents
+  private mapSessionsToPixelAgents(sessions: HermesSession[]): PixelAgent[] {
+    return sessions.map((session, index) => {
+      // 计算工位位置 (3x4 网格)
+      const col = (index % 4) + 1; // 跳过第一列给 Gateway
+      const row = Math.floor(index / 4);
+
+      // 确定状态
+      let status: PixelAgent['status'] = 'idle';
+      if (session.status === 'completed') status = 'offline';
+      else if (session.messageCount > 0) status = 'working';
+
+      return {
+        id: `session-${session.id}`,
+        name: session.name,
+        displayName: session.title || session.name || `Session ${session.id.slice(0, 8)}`,
+        type: 'session',
+        position: { x: col, y: row, workstationId: `desk-${index}` },
+        status,
+        currentActivity: session.status === 'active'
+          ? { type: 'typing', description: `${session.messageCount} messages`, startedAt: session.updatedAt }
+          : undefined,
+        appearance: {
+          color: this.getSessionColor(session.source),
+          avatar: '{}',
+          effects: session.status === 'active' ? ['glow'] : [],
+        },
+        metrics: {
+          totalMessages: session.messageCount,
+          totalTasks: 0,
+          avgResponseTime: 0,
+          lastActivity: session.updatedAt,
+        },
+        sessionId: session.id,
+      };
+    });
+  }
 }
+
+export const monitorService = new MonitorService();
 ```
 
 ---
 
-### 4. WebSocket 消息协议
+---
+
+### 5. WebSocket 层
+
+#### 5.1 服务器实现 (websocket-server.ts)
 
 ```typescript
-// 服务端 → 客户端消息
+import { WebSocketServer, WebSocket } from 'ws';
+import type { Server } from 'http';
+
+let wss: WebSocketServer | null = null;
+
+export function initWebSocketServer(server: Server) {
+  wss = new WebSocketServer({ server, path: '/ws' });
+
+  wss.on('connection', (ws: WebSocket) => {
+    console.log('[WebSocket] Client connected');
+    memoryStore.addWsClient(ws);
+
+    // 发送连接成功消息
+    ws.send(JSON.stringify({
+      type: 'connected',
+      data: { message: 'Connected to Hermes Agent Office' },
+      timestamp: Date.now()
+    }));
+
+    ws.on('message', (data: Buffer) => {
+      try {
+        const message = JSON.parse(data.toString()) as WebSocketMessage<unknown>;
+        handleMessage(ws, message);
+      } catch (error) {
+        console.error('[WebSocket] Invalid message:', error);
+      }
+    });
+
+    ws.on('close', () => {
+      console.log('[WebSocket] Client disconnected');
+      memoryStore.removeWsClient(ws);
+    });
+
+    ws.on('error', (error) => {
+      console.error('[WebSocket] Error:', error);
+      memoryStore.removeWsClient(ws);
+    });
+  });
+
+  console.log('[WebSocket] Server initialized on /ws');
+  return wss;
+}
+
+// 广播消息到所有客户端
+export function broadcast(message: WebSocketMessage<unknown>) {
+  if (!wss) return;
+  memoryStore.broadcast(message);
+}
+```
+
+#### 5.2 消息协议
+
+**服务端 → 客户端消息：**
+
+```typescript
 interface ServerMessage {
   type: 'system_update' | 'agents_update' | 'log' | 'task_update' | 'session_messages' | 'error';
   timestamp: number;
   data: unknown;
 }
 
-// system_update
+// system_update 数据
 interface SystemUpdateData {
   hermesVersion: string;
-  model: {
-    provider: string;
-    modelName: string;
-  };
+  model: ModelInfo;
   authStatus: string;
   components: Record<string, boolean>;
   gatewayStatus: GatewayStatus;
 }
 
-// agents_update
+// agents_update 数据
 interface AgentsUpdateData {
   agents: PixelAgent[];
   changes: AgentChange[];
 }
 
-interface AgentChange {
-  agentId: string;
-  field: string;
-  oldValue: unknown;
-  newValue: unknown;
+// log 数据
+interface LogData {
+  id: string;
   timestamp: number;
+  level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+  component: 'agent' | 'gateway' | 'cli' | 'tools' | 'cron' | 'system';
+  message: string;
+  sessionId?: string;
 }
 
-// task_update (用于像素动画)
+// task_update 数据
 interface TaskUpdateData {
   agentId: string;
   taskType: string;
@@ -444,16 +726,81 @@ interface TaskUpdateData {
   progress?: number;
   toolCall?: ToolCall;
 }
+```
 
-// log
-interface LogData {
-  id: string;
-  timestamp: number;
-  level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
-  component: 'agent' | 'gateway' | 'cli' | 'tools' | 'cron';
-  message: string;
-  sessionId?: string;
+#### 5.3 前端 Hook 实现
+
+```typescript
+// hooks/useWebSocket.ts
+export function useWebSocket(): UseWebSocketReturn {
+  const [isConnected, setIsConnected] = useState(false);
+  const [systemState, setSystemState] = useState<SystemState | null>(null);
+  const [agents, setAgents] = useState<PixelAgent[]>([]);
+  const [logs, setLogs] = useState<HermesLog[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+
+  const connect = useCallback(() => {
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3001/ws';
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setIsConnected(true);
+    };
+
+    ws.onclose = () => {
+      setIsConnected(false);
+      // 3秒后重连
+      reconnectTimeoutRef.current = setTimeout(() => {
+        connect();
+      }, 3000);
+    };
+
+    ws.onmessage = (event) => {
+      const message: ServerMessage = JSON.parse(event.data);
+
+      switch (message.type) {
+        case 'system_update':
+          setSystemState(message.data as SystemState);
+          break;
+
+        case 'agents_update':
+          const { agents: newAgents } = message.data as AgentsUpdateData;
+          setAgents(newAgents);
+          break;
+
+        case 'log':
+          const log = message.data as HermesLog;
+          setLogs((prev) => [log, ...prev].slice(0, 100)); // 保留最近100条
+          break;
+
+        case 'task_update':
+          // 任务更新由父组件处理
+          break;
+
+        case 'session_messages':
+          // 会话消息由父组件处理
+          break;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    connect();
+    return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, [connect]);
+
+  return { isConnected, systemState, agents, logs, lastMessage, error };
 }
+```
 
 // session_messages (选中会话时推送)
 interface SessionMessagesData {
@@ -465,7 +812,7 @@ interface SessionMessagesData {
 
 ---
 
-### 5. 像素办公室状态映射算法
+### 6. 像素办公室状态映射算法
 
 ```typescript
 class PixelOfficeMapper {
@@ -535,39 +882,103 @@ class PixelOfficeMapper {
 
 ---
 
-### 6. API 端点设计
+## 前端像素办公室渲染
+
+### 状态到视觉的映射
 
 ```typescript
-// REST API 端点 (用于初始加载)
-const API_ROUTES = {
-  // 系统
-  'GET /api/system/status': () => SystemState;
-  'GET /api/system/config': () => HermesConfig;
 
-  // Gateway
-  'GET /api/gateways': () => Gateway[];
-  'GET /api/gateways/:id/status': (id: string) => GatewayStatus;
+```typescript
+// shared/constants/api-routes.ts
+export const API_ROUTES = {
+  // Agent API
+  AGENTS: '/agents',
+  AGENT_BY_ID: (id: string) => `/agents/${id}`,
+  AGENT_METRICS: (id: string) => `/agents/${id}/metrics`,
+  AGENT_ACTIVITIES: (id: string) => `/agents/${id}/activities`,
 
-  // 会话
-  'GET /api/sessions': () => HermesSession[];
-  'GET /api/sessions/:id': (id: string) => HermesSessionDetail;
-  'GET /api/sessions/:id/messages': (id: string) => HermesMessage[];
+  // Task API
+  TASKS: '/tasks',
+  TASK_BY_ID: (id: string) => `/tasks/${id}`,
+  TASK_STATS: '/tasks/stats',
 
-  // 像素办公室
-  'GET /api/pixel-office/agents': () => PixelAgent[];
-  'GET /api/pixel-office/layout': () => OfficeLayout;
-  'POST /api/pixel-office/agents/:id/interact': (id: string) => void;
+  // Log API
+  LOGS: '/logs',
+  LOG_STATS: '/logs/stats',
 
-  // 日志
-  'GET /api/logs': (query: {
-    component?: string;
-    level?: string;
-    since?: string;
-    limit?: number
-  }) => HermesLog[];
+  // System API
+  HEALTH: '/health',
+  STATS: '/stats',
 
-  // 洞察
-  'GET /api/insights': (query: { days?: number }) => HermesInsights;
+  // Hermes API
+  HERMES_STATUS: '/hermes/status',
+  HERMES_LOGS: '/hermes/logs',
+  HERMES_INSIGHTS: '/hermes/insights',
+
+  // Sessions API
+  SESSIONS: '/sessions',
+
+  // Pixel Office API
+  PIXEL_OFFICE_AGENTS: '/pixel-office/agents',
+};
+```
+
+#### 前端 API 客户端
+
+```typescript
+// lib/api.ts
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
+
+async function fetchAPI<T>(url: string, options?: RequestInit): Promise<T> {
+  const fullUrl = `${API_BASE}${url}`;
+
+  const response = await fetch(fullUrl, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "Unknown error");
+    throw new Error(`HTTP ${response.status}: ${text}`);
+  }
+
+  return response.json();
+}
+
+// Agent API
+export const agentAPI = {
+  getAll: () => fetchAPI<{ agents: AgentWithStatus[] }>(API_ROUTES.AGENTS),
+  getById: (id: string) => fetchAPI<{ agent: AgentWithStatus }>(API_ROUTES.AGENT_BY_ID(id)),
+  create: (data: CreateAgentRequest) =>
+    fetchAPI<{ agent: Agent }>(API_ROUTES.AGENTS, { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: UpdateAgentRequest) =>
+    fetchAPI<{ agent: Agent }>(API_ROUTES.AGENT_BY_ID(id), { method: "PATCH", body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    fetchAPI<{ success: boolean }>(API_ROUTES.AGENT_BY_ID(id), { method: "DELETE" }),
+};
+
+// Task API
+export const taskAPI = {
+  getAll: () => fetchAPI<{ tasks: Task[] }>(API_ROUTES.TASKS),
+  getById: (id: string) => fetchAPI<{ task: Task }>(API_ROUTES.TASK_BY_ID(id)),
+  create: (data: CreateTaskRequest) =>
+    fetchAPI<{ task: Task }>(API_ROUTES.TASKS, { method: "POST", body: JSON.stringify(data) }),
+  getStats: () => fetchAPI<TaskStats>(API_ROUTES.TASK_STATS),
+};
+
+// Log API
+export const logAPI = {
+  getAll: (filter?: LogFilter) => {
+    const params = new URLSearchParams();
+    if (filter?.agentId) params.append("agentId", filter.agentId);
+    if (filter?.level) params.append("level", filter.level);
+    if (filter?.search) params.append("search", filter.search);
+    return fetchAPI<LogQueryResult>(`${API_ROUTES.LOGS}?${params}`);
+  },
+  getStats: () => fetchAPI<LogStats>(API_ROUTES.LOG_STATS),
 };
 ```
 
@@ -580,7 +991,7 @@ const API_ROUTES = {
 ```typescript
 // 像素办公室渲染配置
 const PIXEL_OFFICE_CONFIG = {
-  // 工位布局
+  // 工位布局 (3x4 网格)
   layout: {
     rows: 3,
     cols: 4,
@@ -696,6 +1107,214 @@ class PixelOfficeWebSocketHandler {
 
 ---
 
+## 错误处理与容错机制
+
+### CLI 执行容错
+
+```typescript
+// 命令执行带错误处理和降级
+async function execHermesCommand(args: string): Promise<string> {
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      timeout: EXEC_TIMEOUT,
+      maxBuffer: MAX_BUFFER,
+      env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:/usr/local/bin:${process.env.PATH}` },
+    });
+    return stdout || '';
+  } catch (error: any) {
+    console.error(`[HermesClient] Command failed: ${command}`, error.message);
+    // 返回空字符串而不是抛出异常，让调用者处理
+    return '';
+  }
+}
+
+// 结果解析容错
+export async function getHermesStatus(): Promise<HermesSystemStatus> {
+  try {
+    const output = await execHermesCommand('status');
+    // 解析逻辑...
+    return status;
+  } catch (error) {
+    console.error('[HermesClient] Failed to get status:', error);
+    // 返回默认状态而不是抛出异常
+    return {
+      version: 'unknown',
+      configLoaded: false,
+      authStatus: 'error',
+      timestamp: Date.now(),
+      components: { cli: false, gateway: false, cron: false, memory: false },
+    };
+  }
+}
+```
+
+### 会话 ID 验证
+
+```typescript
+// UUID 格式验证
+function isValidUUID(str: string): boolean {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str.trim());
+}
+
+// 导出会话时验证
+export async function exportSession(sessionId: string): Promise<HermesMessage[]> {
+  if (!isValidUUID(sessionId)) {
+    console.warn(`[HermesClient] Invalid session ID format: ${sessionId}`);
+    return [];
+  }
+  // ...
+}
+```
+
+### WebSocket 连接恢复
+
+```typescript
+// 自动重连机制
+const connect = useCallback(() => {
+  const ws = new WebSocket(wsUrl);
+  wsRef.current = ws;
+
+  ws.onclose = () => {
+    setIsConnected(false);
+    // 3秒后重连
+    reconnectTimeoutRef.current = setTimeout(() => {
+      connect();
+    }, 3000);
+  };
+}, []);
+```
+
+---
+
+## 性能优化
+
+### 1. 数据聚合与去重
+
+```typescript
+// 日志去重
+addHermesLog(log: HermesLog): void {
+  // 检查是否已存在相同日志
+  const exists = this.hermesLogs.some(
+    l => l.timestamp === log.timestamp && l.message === log.message
+  );
+  if (!exists) {
+    this.hermesLogs.unshift(log);
+    // 只保留最近 1000 条
+    if (this.hermesLogs.length > 1000) {
+      this.hermesLogs = this.hermesLogs.slice(0, 1000);
+    }
+  }
+}
+```
+
+### 2. 变化检测与增量更新
+
+```typescript
+// 只发送变化的数据
+detectAgentChanges(newAgents: PixelAgent[]): AgentChange[] {
+  const changes: AgentChange[] = [];
+  for (const newAgent of newAgents) {
+    const oldAgent = this.agents.get(newAgent.id);
+    if (!oldAgent) continue;
+
+    if (oldAgent.status !== newAgent.status) {
+      changes.push({
+        agentId: newAgent.id,
+        field: 'status',
+        oldValue: oldAgent.status,
+        newValue: newAgent.status,
+        timestamp: Date.now()
+      });
+    }
+  }
+  return changes;
+}
+```
+
+### 3. 前端日志限制
+
+```typescript
+// 只保留最近 100 条日志用于显示
+setLogs((prev) => [log, ...prev].slice(0, 100));
+```
+
+---
+
+## 数据持久化层
+
+### Prisma Schema
+
+```prisma
+// backend/prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Agent - 像素办公室中的 AI Agent
+model Agent {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  displayName String
+  avatar      String?  // 像素头像配置 (JSON 字符串)
+  status      String   @default("OFFLINE") // ONLINE | OFFLINE | BUSY | IDLE | ERROR
+  config      String?  // SQLite 存储 JSON 为 String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks      Task[]
+  activities Activity[]
+  metrics   AgentMetric[]
+}
+
+// Task - Agent 执行的任务
+model Task {
+  id          String   @id @default(uuid())
+  agentId     String
+  type        String   @default("RESEARCH")
+  status      String   @default("PENDING") // PENDING | RUNNING | COMPLETED | FAILED | CANCELLED
+  payload     String?  // JSON 字符串
+  result      String?  // JSON 字符串
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+// Activity - 活动时间线
+model Activity {
+  id          String   @id @default(uuid())
+  agentId     String
+  type        String   @default("AGENT_ONLINE")
+  description String
+  metadata    String?  // JSON 字符串
+  createdAt   DateTime @default(now())
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+// AgentMetric - 性能指标
+model AgentMetric {
+  id          String   @id @default(uuid())
+  agentId     String
+  cpuUsage    Float?
+  memoryUsage Float?
+  apiCalls    Int      @default(0)
+  timestamp   DateTime @default(now())
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+```
+
+---
+
 ## 部署与运行
 
 ### 依赖
@@ -735,6 +1354,63 @@ WS_PORT=3001
 # frontend/.env.local
 NEXT_PUBLIC_API_URL="http://localhost:3001/api"
 NEXT_PUBLIC_WS_URL="ws://localhost:3001/ws"
+```
+
+---
+
+## 安全考虑
+
+### 1. 输入验证
+
+```typescript
+// UUID 格式验证防止命令注入
+function isValidUUID(str: string): boolean {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str.trim());
+}
+
+// 会话 ID 验证
+export async function exportSession(sessionId: string): Promise<HermesMessage[]> {
+  if (!isValidUUID(sessionId)) {
+    console.warn(`[HermesClient] Invalid session ID format: ${sessionId}`);
+    return [];
+  }
+  // ...
+}
+```
+
+### 2. 命令执行安全
+
+```typescript
+// 避免 shell 注入
+async function execHermesCommand(args: string): Promise<string> {
+  // 使用 execAsync 而不是 spawn，限制 PATH 环境变量
+  const { stdout, stderr } = await execAsync(command, {
+    timeout: EXEC_TIMEOUT,
+    maxBuffer: MAX_BUFFER,
+    env: {
+      ...process.env,
+      // 限制 PATH，避免执行未授权命令
+      PATH: `${process.env.HOME}/.local/bin:/usr/local/bin:${process.env.PATH}`,
+    },
+  });
+  return stdout || '';
+}
+```
+
+### 3. 日志敏感信息过滤
+
+```typescript
+// 解析日志时过滤敏感信息
+function parseLogLine(line: string): HermesLog | null {
+  const log = parseLine(line);
+  if (log) {
+    // 移除可能的敏感信息
+    log.message = log.message.replace(/api[_-]?key[:\s=]+[^\s,]+/gi, 'api_key=***');
+    log.message = log.message.replace(/token[:\s=]+[^\s,]+/gi, 'token=***');
+  }
+  return log;
+}
 ```
 
 ---
