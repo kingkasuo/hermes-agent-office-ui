@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { Plus, Search, MoreHorizontal, Loader2, Trash2, Edit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Table,
   TableBody,
@@ -21,7 +22,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
 import { AgentAvatar } from '@/components/pixel-office/AgentAvatar';
-import { useAgents, deleteAgent } from '@/hooks/useAgents';
+import { useAgents, deleteAgent, createAgent } from '@/hooks/useAgents';
 import {
   AGENT_STATUS_LABELS,
   DEFAULT_AGENT_COLORS,
@@ -33,13 +34,21 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
+  DialogFooter,
 } from '@/components/ui/dialog';
 
 export default function AgentsPage() {
   const { agents, isLoading, mutate } = useAgents();
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Form state
+  const [formData, setFormData] = useState({
+    name: '',
+    displayName: '',
+  });
+  const [formError, setFormError] = useState('');
 
   const filteredAgents = agents.filter(
     (agent) =>
@@ -55,6 +64,52 @@ export default function AgentsPage() {
     } catch (error) {
       console.error('Failed to delete agent:', error);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError('');
+
+    // Validation
+    if (!formData.name.trim()) {
+      setFormError('请输入 Agent 名称');
+      return;
+    }
+    if (!formData.displayName.trim()) {
+      setFormError('请输入显示名称');
+      return;
+    }
+
+    // Name format validation (alphanumeric, hyphen, underscore)
+    if (!/^[a-z0-9_-]+$/.test(formData.name)) {
+      setFormError('Agent 名称只能包含小写字母、数字、连字符和下划线');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await createAgent({
+        name: formData.name.toLowerCase(),
+        displayName: formData.displayName,
+      });
+
+      // Reset form and close dialog
+      setFormData({ name: '', displayName: '' });
+      setIsCreateOpen(false);
+
+      // Refresh list
+      mutate();
+    } catch (error: any) {
+      setFormError(error.message || '创建失败，请重试');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleClose = () => {
+    setIsCreateOpen(false);
+    setFormData({ name: '', displayName: '' });
+    setFormError('');
   };
 
   return (
@@ -135,21 +190,65 @@ export default function AgentsPage() {
       </motion.div>
 
       {/* Create Dialog */}
-      <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+      <Dialog open={isCreateOpen} onOpenChange={handleClose}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>添加新 Agent</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <p className="text-sm text-muted-foreground">
-              请使用 API 创建新 Agent。前端界面稍后支持。
-            </p>
-            <code className="block p-3 bg-muted rounded text-sm">
-              POST /api/agents
-              <br />
-              {'{'}"name": "agent-name", "displayName": "显示名称"{'}'}
-            </code>
-          </div>
+          <form onSubmit={handleSubmit}>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="name">
+                  Agent 名称 <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="name"
+                  placeholder="例如: researcher-1"
+                  value={formData.name}
+                  onChange={(e) =>
+                    setFormData({ ...formData, name: e.target.value })
+                  }
+                  disabled={isSubmitting}
+                />
+                <p className="text-xs text-muted-foreground">
+                  只能包含小写字母、数字、连字符和下划线
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="displayName">
+                  显示名称 <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="displayName"
+                  placeholder="例如: 研究员 Alpha"
+                  value={formData.displayName}
+                  onChange={(e) =>
+                    setFormData({ ...formData, displayName: e.target.value })
+                  }
+                  disabled={isSubmitting}
+                />
+              </div>
+              {formError && (
+                <div className="text-sm text-destructive">{formError}</div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleClose}
+                disabled={isSubmitting}
+              >
+                取消
+              </Button>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting && (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                )}
+                创建
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>
