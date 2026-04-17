@@ -228,8 +228,21 @@ class MonitorService extends EventEmitter {
   private async updateSessionDetails(): Promise<void> {
     if (!this.hermesInstalled || this.activeSessionIds.size === 0) return;
 
+    // 验证并清理无效的 session ID
+    const validSessionIds: string[] = [];
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    for (const id of this.activeSessionIds) {
+      if (uuidRegex.test(id.trim())) {
+        validSessionIds.push(id);
+      } else {
+        console.warn(`[MonitorService] Removing invalid session ID: ${id}`);
+        this.activeSessionIds.delete(id);
+      }
+    }
+
     try {
-      for (const sessionId of this.activeSessionIds) {
+      for (const sessionId of validSessionIds) {
         const messages = await exportSession(sessionId);
 
         if (messages.length > 0) {

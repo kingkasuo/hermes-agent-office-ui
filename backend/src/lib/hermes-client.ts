@@ -245,6 +245,14 @@ export async function getSessions(): Promise<HermesSession[]> {
 }
 
 /**
+ * 验证是否为有效的 UUID 格式
+ */
+function isValidUUID(str: string): boolean {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str.trim());
+}
+
+/**
  * 解析会话行
  */
 function parseSessionLine(line: string): HermesSession | null {
@@ -254,6 +262,12 @@ function parseSessionLine(line: string): HermesSession | null {
 
   if (parts.length >= 2) {
     const id = parts[0].trim();
+
+    // 验证 ID 是否为有效的 UUID
+    if (!isValidUUID(id)) {
+      return null;
+    }
+
     const name = parts[1]?.trim() || 'Untitled';
     const createdStr = parts[2];
     const messageCount = parseInt(parts[3], 10) || 0;
@@ -279,6 +293,12 @@ function parseSessionLine(line: string): HermesSession | null {
  * 导出会话消息
  */
 export async function exportSession(sessionId: string): Promise<HermesMessage[]> {
+  // 验证 sessionId 是否为有效的 UUID
+  if (!isValidUUID(sessionId)) {
+    console.warn(`[HermesClient] Invalid session ID format: ${sessionId}`);
+    return [];
+  }
+
   try {
     const output = await execHermesCommand(`sessions export ${sessionId}`);
     const messages: HermesMessage[] = [];
