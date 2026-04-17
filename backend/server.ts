@@ -5,7 +5,8 @@ import { networkInterfaces } from 'os';
 
 // Use relative imports
 import { initWebSocketServer } from './src/lib/websocket-server';
-import { agentMonitor } from './src/server/agent-monitor';
+import { monitorService } from './src/server/monitor-service';
+import { broadcast } from './src/lib/websocket-server';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
@@ -53,8 +54,33 @@ app.prepare().then(() => {
   // Initialize WebSocket server
   initWebSocketServer(server);
 
-  // Start agent monitor
-  agentMonitor.start();
+  // Start monitor service
+  monitorService.start();
+
+  // Forward monitor events to WebSocket clients
+  monitorService.on('system_update', (data) => {
+    broadcast({ type: 'system_update', data, timestamp: Date.now() });
+  });
+
+  monitorService.on('agents_update', (data) => {
+    broadcast({ type: 'agents_update', data, timestamp: Date.now() });
+  });
+
+  monitorService.on('log', (data) => {
+    broadcast({ type: 'log', data, timestamp: Date.now() });
+  });
+
+  monitorService.on('task_update', (data) => {
+    broadcast({ type: 'task_update', data, timestamp: Date.now() });
+  });
+
+  monitorService.on('session_messages', (data) => {
+    broadcast({ type: 'session_messages', data, timestamp: Date.now() });
+  });
+
+  monitorService.on('insights_update', (data) => {
+    broadcast({ type: 'insights_update', data, timestamp: Date.now() });
+  });
 
   server
     .once('error', (err) => {

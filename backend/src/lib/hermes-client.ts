@@ -1,23 +1,30 @@
 // Hermes CLI 客户端 - 执行 hermes 命令并解析输出
-import { exec } from 'child_process';
+import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
+import { EventEmitter } from 'events';
 import type {
-  HermesStatus,
-  HermesLog,
+  HermesSystemStatus,
+  HermesConfig,
+  GatewayStatus,
+  Gateway,
   HermesSession,
+  HermesSessionDetail,
+  HermesMessage,
+  HermesLog,
   HermesInsights,
+  AuthProvider,
+  ModelInfo,
+  LogStreamOptions,
 } from '../../../shared/types/hermes';
 
 const execAsync = promisify(exec);
 
 // 命令执行配置
-const EXEC_TIMEOUT = 30000; // 30秒超时
-const MAX_BUFFER = 1024 * 1024; // 1MB 缓冲区
+const EXEC_TIMEOUT = 30000;
+const MAX_BUFFER = 1024 * 1024;
 
 /**
  * 执行 hermes 命令
- * @param args 命令参数
- * @returns 命令输出
  */
 async function execHermesCommand(args: string): Promise<string> {
   const command = `hermes ${args}`;
@@ -28,8 +35,7 @@ async function execHermesCommand(args: string): Promise<string> {
       maxBuffer: MAX_BUFFER,
       env: {
         ...process.env,
-        // 确保 hermes 可以找到
-        PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}`,
+        PATH: `${process.env.HOME}/.local/bin:/usr/local/bin:${process.env.PATH}`,
       },
     });
 
@@ -45,63 +51,47 @@ async function execHermesCommand(args: string): Promise<string> {
 }
 
 /**
- * 获取 Hermes 状态
- * 执行: hermes status
+ * 获取 Hermes 系统状态
  */
-export async function getHermesStatus(): Promise<HermesStatus> {
+export async function getHermesStatus(): Promise<HermesSystemStatus> {
   try {
     const output = await execHermesCommand('status');
 
-    // 解析状态输出
-    const status: HermesStatus = {
+    const status: HermesSystemStatus = {
       version: '',
       configLoaded: false,
       authStatus: 'unknown',
-      modelProvider: '',
-      gatewayRunning: false,
-      components: {},
       timestamp: Date.now(),
+      components: {
+        cli: false,
+        gateway: false,
+        cron: false,
+        memory: false,
+      },
     };
 
-    // 解析输出行
     const lines = output.split('\n');
     for (const line of lines) {
-      const trimmed = line.trim();
+      const trimmed = line.trim().toLowerCase();
 
-      // 版本信息
-      if (trimmed.startsWith('Version:')) {
-        status.version = trimmed.split(':')[1]?.trim() || '';
-      }
-      // 配置加载状态
-      else if (trimmed.includes('config') && trimmed.includes('loaded')) {
-        status.configLoaded = !trimmed.toLowerCase().includes('not');
-      }
-      // 认证状态
-      else if (trimmed.includes('auth') || trimmed.includes('logged in')) {
-        status.authStatus = trimmed.toLowerCase().includes('not')
+      if (trimmed.includes('version')) {
+        const match = line.match(/version[:\s]+([\d.]+)/i);
+        if (match) status.version = match[1];
+      } else if (trimmed.includes('config') && trimmed.includes('loaded')) {
+        status.configLoaded = !trimmed.includes('not');
+      } else if (trimmed.includes('auth') || trimmed.includes('authenticated')) {
+        status.authStatus = trimmed.includes('not') || trimmed.includes('unauthenticated')
           ? 'not_authenticated'
           : 'authenticated';
+      } else if (trimmed.includes('cli')) {
+        status.components.cli = trimmed.includes('ok') || trimmed.includes('running');
+      } else if (trimmed.includes('gateway')) {
+        status.components.gateway = trimmed.includes('ok') || trimmed.includes('running');
+      } else if (trimmed.includes('cron')) {
+        status.components.cron = trimmed.includes('ok') || trimmed.includes('running');
+      } else if (trimmed.includes('memory')) {
+        status.components.memory = trimmed.includes('ok') || trimmed.includes('configured');
       }
-      // 模型提供商
-      else if (trimmed.includes('model') || trimmed.includes('provider')) {
-        const match = trimmed.match(/provider[:\s]+(\w+)/i);
-        if (match) status.modelProvider = match[1];
-      }
-      // Gateway 状态
-      else if (trimmed.includes('gateway')) {
-        status.gatewayRunning = trimmed.toLowerCase().includes('running');
-      }
-    }
-
-    // 尝试解析 JSON 格式输出（如果支持）
-    try {
-      const jsonMatch = output.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const jsonData = JSON.parse(jsonMatch[0]);
-        Object.assign(status, jsonData);
-      }
-    } catch {
-      // 忽略 JSON 解析错误，使用文本解析
     }
 
     return status;
@@ -111,144 +101,136 @@ export async function getHermesStatus(): Promise<HermesStatus> {
       version: 'unknown',
       configLoaded: false,
       authStatus: 'error',
-      modelProvider: '',
-      gatewayRunning: false,
-      components: {},
       timestamp: Date.now(),
-      error: error instanceof Error ? error.message : 'Unknown error',
+      components: { cli: false, gateway: false, cron: false, memory: false },
     };
   }
 }
 
 /**
- * 获取 Hermes 日志
- * 执行: hermes logs [options]
- * @param options 日志选项
+ * 获取 Hermes 配置
  */
-export async function getHermesLogs(options?: {
-  lines?: number;
-  follow?: boolean;
-  since?: string; // e.g., '1h', '30m', '1d'
-  level?: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
-}): Promise<HermesLog[]> {
+export async function getHermesConfig(): Promise<HermesConfig> {
   try {
-    let args = 'logs';
+    const output = await execHermesCommand('config show');
 
-    if (options?.lines) {
-      args += ` -n ${options.lines}`;
-    }
+    const config: HermesConfig = {
+      model: {
+        provider: 'unknown',
+        modelName: 'unknown',
+        maxTokens: 200000,
+      },
+      toolsets: [],
+      features: {
+        voiceMode: false,
+        compression: true,
+        promptCaching: true,
+      },
+      personalities: [],
+    };
 
-    if (options?.since) {
-      args += ` --since ${options.since}`;
-    }
-
-    const output = await execHermesCommand(args);
-    const logs: HermesLog[] = [];
-
-    // 解析日志行
-    // 格式示例: 2024-01-15 10:30:45 [INFO] Message content
-    const lines = output.split('\n').filter((line) => line.trim());
+    const lines = output.split('\n');
+    let inModelSection = false;
+    let inFeaturesSection = false;
 
     for (const line of lines) {
-      const log = parseLogLine(line);
-      if (log) {
-        // 过滤级别
-        if (options?.level && log.level !== options.level) {
-          continue;
+      const trimmed = line.trim().toLowerCase();
+
+      if (trimmed.includes('model:') || trimmed.includes('provider:')) {
+        inModelSection = true;
+        const match = line.match(/provider[:\s]+(\w+)/i);
+        if (match) config.model.provider = match[1];
+      } else if (trimmed.includes('model name:') || trimmed.includes('model:')) {
+        const match = line.match(/model[:\s]+([\w\-./]+)/i);
+        if (match) config.model.modelName = match[1];
+      } else if (trimmed.includes('max_tokens:') || trimmed.includes('max tokens:')) {
+        const match = line.match(/(\d+)/);
+        if (match) config.model.maxTokens = parseInt(match[1], 10);
+      } else if (trimmed.includes('features:')) {
+        inFeaturesSection = true;
+        inModelSection = false;
+      } else if (trimmed.includes('toolsets:') || trimmed.includes('tools:')) {
+        const match = line.match(/[:\s]+([\w,\s]+)/i);
+        if (match) {
+          config.toolsets = match[1].split(',').map(t => t.trim()).filter(Boolean);
         }
-        logs.push(log);
+      } else if (trimmed.includes('voice')) {
+        config.features.voiceMode = trimmed.includes('true') || trimmed.includes('enabled');
+      } else if (trimmed.includes('compression')) {
+        config.features.compression = !trimmed.includes('false') && !trimmed.includes('disabled');
       }
     }
 
-    return logs;
+    return config;
   } catch (error) {
-    console.error('[HermesClient] Failed to get logs:', error);
-    return [];
+    console.error('[HermesClient] Failed to get config:', error);
+    return {
+      model: { provider: 'unknown', modelName: 'unknown', maxTokens: 200000 },
+      toolsets: [],
+      features: { voiceMode: false, compression: true, promptCaching: true },
+      personalities: [],
+    };
   }
 }
 
 /**
- * 解析单行日志
+ * 获取 Gateway 状态
  */
-function parseLogLine(line: string): HermesLog | null {
-  // 尝试匹配常见日志格式
-  const patterns = [
-    // 格式: 2024-01-15 10:30:45 [INFO] Message
-    /^(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2})\s*\[(\w+)\]\s*(.+)$/,
-    // 格式: [2024-01-15 10:30:45] [INFO] Message
-    /^\[(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2})\]\s*\[(\w+)\]\s*(.+)$/,
-    // 格式: INFO 2024-01-15 10:30:45 Message
-    /^(\w+)\s+(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2})\s*(.+)$/,
-    // 简单格式: [INFO] Message
-    /^\[(\w+)\]\s*(.+)$/,
-  ];
+export async function getGatewayStatus(): Promise<GatewayStatus> {
+  try {
+    const output = await execHermesCommand('gateway status');
 
-  for (const pattern of patterns) {
-    const match = line.match(pattern);
-    if (match) {
-      let timestamp: number;
-      let level: string;
-      let message: string;
+    const status: GatewayStatus = {
+      running: false,
+      serviceType: 'none',
+      connectedPlatforms: [],
+    };
 
-      if (match.length === 4) {
-        // 有时间戳和级别
-        const dateStr = match[1].includes('-') ? match[1] : match[2];
-        level = match[1].includes('-') ? match[2] : match[1];
-        message = match[3];
-        timestamp = new Date(dateStr).getTime() || Date.now();
-      } else {
-        // 只有级别和消息
-        level = match[1];
-        message = match[2];
-        timestamp = Date.now();
+    const lines = output.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim().toLowerCase();
+
+      if (trimmed.includes('status') || trimmed.includes('running')) {
+        status.running = trimmed.includes('running') || trimmed.includes('active');
+      } else if (trimmed.includes('service')) {
+        if (trimmed.includes('systemd')) status.serviceType = 'systemd';
+        else if (trimmed.includes('launchd')) status.serviceType = 'launchd';
+        else if (trimmed.includes('foreground')) status.serviceType = 'foreground';
+      } else if (trimmed.includes('platform')) {
+        const match = line.match(/[:\s]+([\w,\s]+)/i);
+        if (match) {
+          status.connectedPlatforms = match[1].split(',').map(p => p.trim()).filter(Boolean);
+        }
       }
-
-      return {
-        id: `${timestamp}-${Math.random().toString(36).slice(2, 11)}`,
-        timestamp,
-        level: normalizeLogLevel(level),
-        message: message.trim(),
-        source: 'hermes',
-        raw: line,
-      };
     }
+
+    return status;
+  } catch (error) {
+    console.error('[HermesClient] Failed to get gateway status:', error);
+    return { running: false, serviceType: 'none', connectedPlatforms: [] };
   }
-
-  // 无法解析，作为普通信息日志
-  return {
-    id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-    timestamp: Date.now(),
-    level: 'INFO',
-    message: line.trim(),
-    source: 'hermes',
-    raw: line,
-  };
 }
 
 /**
- * 标准化日志级别
+ * 获取会话列表
  */
-function normalizeLogLevel(level: string): 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' {
-  const upper = level.toUpperCase();
-  if (upper.includes('DEBUG')) return 'DEBUG';
-  if (upper.includes('INFO')) return 'INFO';
-  if (upper.includes('WARN')) return 'WARN';
-  if (upper.includes('ERROR') || upper.includes('FATAL')) return 'ERROR';
-  return 'INFO';
-}
-
-/**
- * 获取 Hermes 会话列表
- * 执行: hermes sessions list
- */
-export async function getHermesSessions(): Promise<HermesSession[]> {
+export async function getSessions(): Promise<HermesSession[]> {
   try {
     const output = await execHermesCommand('sessions list');
     const sessions: HermesSession[] = [];
 
-    const lines = output.split('\n').filter((line) => line.trim());
+    const lines = output.split('\n').filter(line => line.trim());
+    let isTableHeader = true;
 
     for (const line of lines) {
+      // 跳过表头行
+      if (isTableHeader) {
+        if (line.includes('---') || line.includes('ID')) {
+          isTableHeader = false;
+        }
+        continue;
+      }
+
       const session = parseSessionLine(line);
       if (session) {
         sessions.push(session);
@@ -266,17 +248,18 @@ export async function getHermesSessions(): Promise<HermesSession[]> {
  * 解析会话行
  */
 function parseSessionLine(line: string): HermesSession | null {
-  // 尝试解析表格格式或列表格式
-  // 示例: ID    Name    Created    Messages
-  //       abc   test    2024-01-15 45
-
-  const parts = line.trim().split(/\s{2,}/); // 2+ 空格分隔
+  // 尝试多种格式解析
+  // 格式1: ID    Name    Created    Messages  Status
+  const parts = line.trim().split(/\s{2,}/);
 
   if (parts.length >= 2) {
-    const id = parts[0];
-    const name = parts[1] || 'Untitled';
-    const createdAt = parts[2] ? new Date(parts[2]).getTime() : Date.now();
+    const id = parts[0].trim();
+    const name = parts[1]?.trim() || 'Untitled';
+    const createdStr = parts[2];
     const messageCount = parseInt(parts[3], 10) || 0;
+    const statusStr = parts[4]?.toLowerCase() || 'active';
+
+    const createdAt = createdStr ? new Date(createdStr).getTime() || Date.now() : Date.now();
 
     return {
       id,
@@ -284,7 +267,8 @@ function parseSessionLine(line: string): HermesSession | null {
       createdAt,
       updatedAt: createdAt,
       messageCount,
-      status: 'active',
+      status: statusStr.includes('active') ? 'active' : statusStr.includes('pause') ? 'paused' : 'completed',
+      source: 'cli',
     };
   }
 
@@ -292,12 +276,109 @@ function parseSessionLine(line: string): HermesSession | null {
 }
 
 /**
- * 获取 Hermes 使用洞察
- * 执行: hermes insights
+ * 导出会话消息
  */
-export async function getHermesInsights(): Promise<HermesInsights> {
+export async function exportSession(sessionId: string): Promise<HermesMessage[]> {
   try {
-    const output = await execHermesCommand('insights');
+    const output = await execHermesCommand(`sessions export ${sessionId}`);
+    const messages: HermesMessage[] = [];
+
+    try {
+      // 尝试解析 JSONL 格式
+      const lines = output.split('\n').filter(line => line.trim());
+      for (const line of lines) {
+        try {
+          const msg = JSON.parse(line);
+          messages.push({
+            id: msg.id || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            sessionId,
+            role: msg.role || 'assistant',
+            content: msg.content || '',
+            timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
+            metadata: {
+              model: msg.model,
+              tokens: msg.tokens,
+              toolCalls: msg.tool_calls,
+            },
+          });
+        } catch {
+          // 忽略无法解析的行
+        }
+      }
+    } catch {
+      // 如果不是 JSON，尝试文本解析
+      return parseTextMessages(output, sessionId);
+    }
+
+    return messages;
+  } catch (error) {
+    console.error('[HermesClient] Failed to export session:', error);
+    return [];
+  }
+}
+
+/**
+ * 解析文本格式的消息
+ */
+function parseTextMessages(output: string, sessionId: string): HermesMessage[] {
+  const messages: HermesMessage[] = [];
+  const lines = output.split('\n');
+
+  let currentRole: 'user' | 'assistant' | 'system' = 'assistant';
+  let currentContent = '';
+  let timestamp = Date.now();
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith('User:') || trimmed.startsWith('user:')) {
+      if (currentContent) {
+        messages.push({
+          id: `${timestamp}-${Math.random().toString(36).slice(2, 9)}`,
+          sessionId,
+          role: currentRole,
+          content: currentContent.trim(),
+          timestamp,
+        });
+      }
+      currentRole = 'user';
+      currentContent = trimmed.replace(/^user:/i, '').trim();
+    } else if (trimmed.startsWith('Assistant:') || trimmed.startsWith('assistant:')) {
+      if (currentContent) {
+        messages.push({
+          id: `${timestamp}-${Math.random().toString(36).slice(2, 9)}`,
+          sessionId,
+          role: currentRole,
+          content: currentContent.trim(),
+          timestamp,
+        });
+      }
+      currentRole = 'assistant';
+      currentContent = trimmed.replace(/^assistant:/i, '').trim();
+    } else {
+      currentContent += '\n' + trimmed;
+    }
+  }
+
+  if (currentContent) {
+    messages.push({
+      id: `${timestamp}-${Math.random().toString(36).slice(2, 9)}`,
+      sessionId,
+      role: currentRole,
+      content: currentContent.trim(),
+      timestamp,
+    });
+  }
+
+  return messages;
+}
+
+/**
+ * 获取洞察数据
+ */
+export async function getInsights(days = 7): Promise<HermesInsights> {
+  try {
+    const output = await execHermesCommand(`insights --days ${days}`);
 
     const insights: HermesInsights = {
       totalSessions: 0,
@@ -305,16 +386,14 @@ export async function getHermesInsights(): Promise<HermesInsights> {
       totalTokens: 0,
       usageByProvider: {},
       topSkills: [],
-      period: '7d',
+      period: `${days}d`,
       timestamp: Date.now(),
     };
 
     const lines = output.split('\n');
-
     for (const line of lines) {
-      const trimmed = line.trim().toLowerCase();
+      const trimmed = line.toLowerCase();
 
-      // 解析各类指标
       if (trimmed.includes('session')) {
         const match = line.match(/(\d+)/);
         if (match) insights.totalSessions = parseInt(match[1], 10);
@@ -336,55 +415,69 @@ export async function getHermesInsights(): Promise<HermesInsights> {
       totalTokens: 0,
       usageByProvider: {},
       topSkills: [],
-      period: '7d',
+      period: `${days}d`,
       timestamp: Date.now(),
     };
   }
 }
 
 /**
- * 获取当前活跃的 hermes 进程信息
+ * 获取认证提供商
  */
-export async function getActiveHermesProcesses(): Promise<
-  Array<{
-    pid: string;
-    command: string;
-    startTime: string;
-  }>
-> {
+export async function getAuthProviders(): Promise<AuthProvider[]> {
   try {
-    const { stdout } = await execAsync(
-      "ps aux | grep -i hermes | grep -v grep || true",
-      { timeout: 5000 }
-    );
+    const output = await execHermesCommand('auth list');
+    const providers: AuthProvider[] = [];
 
-    const processes: Array<{
-      pid: string;
-      command: string;
-      startTime: string;
-    }> = [];
-
-    const lines = stdout.split('\n').filter((line) => line.trim());
-
+    const lines = output.split('\n');
     for (const line of lines) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length >= 10) {
-        processes.push({
-          pid: parts[1],
-          startTime: parts[8] || parts[9] || 'unknown',
-          command: parts.slice(10).join(' '),
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.includes('---')) continue;
+
+      const parts = trimmed.split(/\s{2,}/);
+      if (parts.length >= 2) {
+        providers.push({
+          name: parts[0].trim(),
+          type: parts[1]?.toLowerCase().includes('oauth') ? 'oauth' : 'api_key',
+          status: trimmed.includes('active') || trimmed.includes('ok') ? 'active' : 'error',
         });
       }
     }
 
-    return processes;
-  } catch {
+    return providers;
+  } catch (error) {
+    console.error('[HermesClient] Failed to get auth providers:', error);
     return [];
   }
 }
 
 /**
- * 检查 hermes 是否已安装
+ * 获取当前模型
+ */
+export async function getCurrentModel(): Promise<ModelInfo> {
+  try {
+    const config = await getHermesConfig();
+    return config.model;
+  } catch (error) {
+    console.error('[HermesClient] Failed to get current model:', error);
+    return { provider: 'unknown', modelName: 'unknown', maxTokens: 200000 };
+  }
+}
+
+/**
+ * 获取 Hermes 版本
+ */
+export async function getHermesVersion(): Promise<string> {
+  try {
+    const output = await execHermesCommand('--version');
+    return output.trim() || 'unknown';
+  } catch {
+    return 'not_installed';
+  }
+}
+
+/**
+ * 检查 Hermes 是否已安装
  */
 export async function isHermesInstalled(): Promise<boolean> {
   try {
@@ -396,13 +489,207 @@ export async function isHermesInstalled(): Promise<boolean> {
 }
 
 /**
- * 获取 hermes 版本
+ * 获取日志（一次性）
  */
-export async function getHermesVersion(): Promise<string> {
+export async function getLogs(options?: LogStreamOptions): Promise<HermesLog[]> {
   try {
-    const output = await execHermesCommand('--version');
-    return output.trim() || 'unknown';
-  } catch {
-    return 'not_installed';
+    let args = 'logs';
+
+    if (options?.lines) {
+      args += ` -n ${options.lines}`;
+    }
+
+    if (options?.since) {
+      args += ` --since ${options.since}`;
+    }
+
+    if (options?.level) {
+      args += ` --level ${options.level}`;
+    }
+
+    if (options?.component) {
+      args += ` --component ${options.component}`;
+    }
+
+    const output = await execHermesCommand(args);
+    return parseLogs(output);
+  } catch (error) {
+    console.error('[HermesClient] Failed to get logs:', error);
+    return [];
   }
+}
+
+/**
+ * 解析日志输出
+ */
+function parseLogs(output: string): HermesLog[] {
+  const logs: HermesLog[] = [];
+  const lines = output.split('\n').filter(line => line.trim());
+
+  for (const line of lines) {
+    const log = parseLogLine(line);
+    if (log) {
+      logs.push(log);
+    }
+  }
+
+  return logs;
+}
+
+/**
+ * 解析单行日志
+ */
+function parseLogLine(line: string): HermesLog | null {
+  const patterns = [
+    // 格式: 2024-01-15 10:30:45 [INFO] [component] Message
+    /^(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2})\s*\[(\w+)\]\s*(?:\[(\w+)\])?\s*(.+)$/,
+    // 格式: [2024-01-15 10:30:45] [INFO] Message
+    /^\[(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2})\]\s*\[(\w+)\]\s*(.+)$/,
+    // 简单格式: [INFO] Message
+    /^\[(\w+)\]\s*(.+)$/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = line.match(pattern);
+    if (match) {
+      let timestamp: number;
+      let level: string;
+      let component = 'system';
+      let message: string;
+
+      if (match.length === 5) {
+        // 有时间戳、级别、组件和消息
+        timestamp = new Date(match[1]).getTime() || Date.now();
+        level = match[2];
+        component = match[3] || 'system';
+        message = match[4];
+      } else if (match.length === 4) {
+        if (match[1].includes('-')) {
+          // 有时间戳和级别
+          timestamp = new Date(match[1]).getTime() || Date.now();
+          level = match[2];
+          message = match[3];
+        } else {
+          // 有级别，无时间戳
+          level = match[1];
+          message = match[2];
+          timestamp = Date.now();
+        }
+      } else {
+        level = match[1];
+        message = match[2];
+        timestamp = Date.now();
+      }
+
+      return {
+        id: `${timestamp}-${Math.random().toString(36).slice(2, 9)}`,
+        timestamp,
+        level: normalizeLogLevel(level),
+        component: normalizeComponent(component),
+        message: message.trim(),
+        raw: line,
+      };
+    }
+  }
+
+  // 无法解析，作为普通信息日志
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    timestamp: Date.now(),
+    level: 'INFO',
+    component: 'system',
+    message: line.trim(),
+    raw: line,
+  };
+}
+
+/**
+ * 标准化日志级别
+ */
+function normalizeLogLevel(level: string): 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' {
+  const upper = level.toUpperCase();
+  if (upper.includes('DEBUG')) return 'DEBUG';
+  if (upper.includes('INFO')) return 'INFO';
+  if (upper.includes('WARN')) return 'WARN';
+  if (upper.includes('ERROR') || upper.includes('FATAL') || upper.includes('CRITICAL')) return 'ERROR';
+  return 'INFO';
+}
+
+/**
+ * 标准化组件名称
+ */
+function normalizeComponent(component: string): 'agent' | 'gateway' | 'cli' | 'tools' | 'cron' | 'system' {
+  const lower = component.toLowerCase();
+  if (lower.includes('agent')) return 'agent';
+  if (lower.includes('gateway')) return 'gateway';
+  if (lower.includes('cli')) return 'cli';
+  if (lower.includes('tool')) return 'tools';
+  if (lower.includes('cron')) return 'cron';
+  return 'system';
+}
+
+/**
+ * 创建日志流（实时）
+ */
+export function createLogStream(options: LogStreamOptions = {}): EventEmitter {
+  const emitter = new EventEmitter();
+
+  let args = ['logs'];
+
+  if (options.follow) {
+    args.push('-f');
+  }
+
+  if (options.lines) {
+    args.push('-n', options.lines.toString());
+  }
+
+  if (options.level) {
+    args.push('--level', options.level);
+  }
+
+  if (options.component) {
+    args.push('--component', options.component);
+  }
+
+  const child = spawn('hermes', args, {
+    env: {
+      ...process.env,
+      PATH: `${process.env.HOME}/.local/bin:/usr/local/bin:${process.env.PATH}`,
+    },
+  });
+
+  let buffer = '';
+
+  child.stdout.on('data', (data: Buffer) => {
+    buffer += data.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || ''; // 保留未完成的行
+
+    for (const line of lines) {
+      const log = parseLogLine(line);
+      if (log) {
+        emitter.emit('log', log);
+      }
+    }
+  });
+
+  child.stderr.on('data', (data: Buffer) => {
+    console.warn('[HermesClient] Log stream stderr:', data.toString());
+  });
+
+  child.on('close', (code) => {
+    emitter.emit('close', code);
+  });
+
+  child.on('error', (error) => {
+    emitter.emit('error', error);
+  });
+
+  // 提供停止方法
+  (emitter as any).stop = () => {
+    child.kill();
+  };
+
+  return emitter;
 }

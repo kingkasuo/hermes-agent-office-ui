@@ -1,8 +1,18 @@
-// 内存缓存组件 - 零依赖架构
+// 内存状态缓存 - 零依赖实时数据存储
 import type { WebSocket } from 'ws';
 import type { LogEntry } from '../../../shared/types/log';
 import type { AgentStatus } from '../../../shared/types/agent';
-import type { HermesInsights } from '../../../shared/types/hermes';
+import type {
+  HermesSystemStatus,
+  HermesConfig,
+  GatewayStatus,
+  HermesSession,
+  HermesLog,
+  HermesInsights,
+  PixelAgent,
+  SystemState,
+  AgentChange,
+} from '../../../shared/types/hermes';
 
 interface CacheEntry<T> {
   value: T;
@@ -18,7 +28,153 @@ class MemoryStore {
   private wsClients = new Set<WebSocket>();
   private insights: HermesInsights | null = null;
 
-  // Agent 实时状态
+  // ===== 新架构数据 =====
+  private agents = new Map<string, PixelAgent>();
+  private sessions = new Map<string, HermesSession>();
+  private hermesLogs: HermesLog[] = [];
+  private systemState: SystemState | null = null;
+  private hermesConfig: HermesConfig | null = null;
+  private gatewayStatus: GatewayStatus | null = null;
+
+  // ========== 系统状态 (新架构) ==========
+
+  setSystemState(state: SystemState) {
+    this.systemState = state;
+  }
+
+  getSystemState(): SystemState | null {
+    return this.systemState;
+  }
+
+  setHermesConfig(config: HermesConfig) {
+    this.hermesConfig = config;
+  }
+
+  getHermesConfig(): HermesConfig | null {
+    return this.hermesConfig;
+  }
+
+  setGatewayStatus(status: GatewayStatus) {
+    this.gatewayStatus = status;
+  }
+
+  getGatewayStatus(): GatewayStatus | null {
+    return this.gatewayStatus;
+  }
+
+  // ========== Pixel Agent 管理 (新架构) ==========
+
+  setAgent(agent: PixelAgent) {
+    this.agents.set(agent.id, agent);
+  }
+
+  getAgent(id: string): PixelAgent | undefined {
+    return this.agents.get(id);
+  }
+
+  getAllAgents(): PixelAgent[] {
+    return Array.from(this.agents.values());
+  }
+
+  removeAgent(id: string) {
+    this.agents.delete(id);
+  }
+
+  detectAgentChanges(newAgents: PixelAgent[]): AgentChange[] {
+    const changes: AgentChange[] = [];
+
+    for (const newAgent of newAgents) {
+      const oldAgent = this.agents.get(newAgent.id);
+
+      if (!oldAgent) {
+        changes.push({
+          agentId: newAgent.id,
+          field: 'created',
+          oldValue: null,
+          newValue: newAgent,
+          timestamp: Date.now(),
+        });
+      } else {
+        if (oldAgent.status !== newAgent.status) {
+          changes.push({
+            agentId: newAgent.id,
+            field: 'status',
+            oldValue: oldAgent.status,
+            newValue: newAgent.status,
+            timestamp: Date.now(),
+          });
+        }
+
+        if (oldAgent.currentActivity?.type !== newAgent.currentActivity?.type) {
+          changes.push({
+            agentId: newAgent.id,
+            field: 'currentActivity',
+            oldValue: oldAgent.currentActivity,
+            newValue: newAgent.currentActivity,
+            timestamp: Date.now(),
+          });
+        }
+      }
+    }
+
+    const newAgentIds = new Set(newAgents.map(a => a.id));
+    for (const [id, agent] of this.agents) {
+      if (!newAgentIds.has(id)) {
+        changes.push({
+          agentId: id,
+          field: 'deleted',
+          oldValue: agent,
+          newValue: null,
+          timestamp: Date.now(),
+        });
+      }
+    }
+
+    return changes;
+  }
+
+  // ========== 会话管理 (新架构) ==========
+
+  setSession(session: HermesSession) {
+    this.sessions.set(session.id, session);
+  }
+
+  getSession(id: string): HermesSession | undefined {
+    return this.sessions.get(id);
+  }
+
+  getAllSessions(): HermesSession[] {
+    return Array.from(this.sessions.values());
+  }
+
+  removeSession(id: string) {
+    this.sessions.delete(id);
+  }
+
+  // ========== Hermes 日志 (新架构) ==========
+
+  addHermesLog(log: HermesLog) {
+    const exists = this.hermesLogs.some(l => l.id === log.id);
+    if (exists) return;
+
+    this.hermesLogs.unshift(log);
+    if (this.hermesLogs.length > this.maxLogs) {
+      this.hermesLogs = this.hermesLogs.slice(0, this.maxLogs);
+    }
+  }
+
+  getRecentHermesLogs(limit = 100): HermesLog[] {
+    return this.hermesLogs.slice(0, limit);
+  }
+
+  getHermesLogsByComponent(component: string, limit = 100): HermesLog[] {
+    return this.hermesLogs
+      .filter(log => log.component === component)
+      .slice(0, limit);
+  }
+
+  // ========== 兼容旧架构 ==========
+
   setAgentStatus(agentId: string, status: AgentStatus) {
     this.agentStatuses.set(agentId, status);
   }
@@ -31,7 +187,6 @@ class MemoryStore {
     return Object.fromEntries(this.agentStatuses);
   }
 
-  // Agent 实时指标
   setAgentMetrics(agentId: string, metrics: { cpu: number; memory: number; apiCalls: number }) {
     this.agentMetrics.set(agentId, { ...metrics, timestamp: Date.now() });
   }
@@ -44,7 +199,16 @@ class MemoryStore {
     return Object.fromEntries(this.agentMetrics);
   }
 
-  // 通用缓存
+  setInsights(insights: HermesInsights) {
+    this.insights = insights;
+  }
+
+  getInsights(): HermesInsights | null {
+    return this.insights;
+  }
+
+  // ========== 通用缓存 ==========
+
   set<T>(key: string, value: T, ttlSeconds?: number) {
     this.cache.set(key, {
       value,
@@ -62,7 +226,8 @@ class MemoryStore {
     return entry.value as T;
   }
 
-  // 日志缓存
+  // ========== 日志缓存 (旧架构兼容) ==========
+
   addLog(log: LogEntry) {
     this.logs.unshift(log);
     if (this.logs.length > this.maxLogs) {
@@ -78,7 +243,20 @@ class MemoryStore {
     return this.logs.filter(log => log.agentId === agentId).slice(0, limit);
   }
 
-  // WebSocket 客户端管理
+  getLogById(id: string): LogEntry | undefined {
+    return this.logs.find(log => log.id === id);
+  }
+
+  cleanupLogs(cutoff: number) {
+    this.logs = this.logs.filter(log => log.timestamp >= cutoff);
+  }
+
+  getLogCount(): number {
+    return this.logs.length;
+  }
+
+  // ========== WebSocket 管理 ==========
+
   addWsClient(ws: WebSocket) {
     this.wsClients.add(ws);
   }
@@ -100,7 +278,8 @@ class MemoryStore {
     });
   }
 
-  // 清理过期缓存
+  // ========== 清理 ==========
+
   cleanup() {
     const now = Date.now();
     for (const [key, entry] of this.cache.entries()) {
@@ -108,7 +287,6 @@ class MemoryStore {
         this.cache.delete(key);
       }
     }
-    // 清理过期的 metrics (超过5分钟)
     for (const [agentId, metrics] of this.agentMetrics.entries()) {
       if (now - metrics.timestamp > 5 * 60 * 1000) {
         this.agentMetrics.delete(agentId);
@@ -116,26 +294,16 @@ class MemoryStore {
     }
   }
 
-  // 日志高级操作
-  getLogById(id: string): LogEntry | undefined {
-    return this.logs.find(log => log.id === id);
-  }
+  // ========== 统计 ==========
 
-  cleanupLogs(cutoff: number) {
-    this.logs = this.logs.filter(log => log.timestamp >= cutoff);
-  }
-
-  getLogCount(): number {
-    return this.logs.length;
-  }
-
-  // Hermes 洞察数据
-  setInsights(insights: HermesInsights) {
-    this.insights = insights;
-  }
-
-  getInsights(): HermesInsights | null {
-    return this.insights;
+  getStats() {
+    return {
+      agents: this.agents.size,
+      sessions: this.sessions.size,
+      hermesLogs: this.hermesLogs.length,
+      cache: this.cache.size,
+      wsClients: this.wsClients.size,
+    };
   }
 }
 
