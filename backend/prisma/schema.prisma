@@ -18,8 +18,8 @@ model Agent {
   avatar      String?  // Pixel avatar config (JSON string)
   status      String   @default("OFFLINE") // ONLINE | OFFLINE | BUSY | IDLE | ERROR
   config      String?  // SQLite stores JSON as String
-  createdAt   Int      @default(dbgenerated("strftime('%s', 'now')"))
-  updatedAt   Int      @default(dbgenerated("strftime('%s', 'now')"))
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   tasks      Task[]
   activities Activity[]
@@ -34,9 +34,9 @@ model Task {
   status      String   @default("PENDING") // PENDING | RUNNING | COMPLETED | FAILED | CANCELLED
   payload    String?  // SQLite JSON storage
   result     String?  // SQLite JSON storage
-  startedAt  Int?     // Unix timestamp
-  completedAt Int?    // Unix timestamp
-  createdAt  Int      @default(dbgenerated("strftime('%s', 'now')"))
+  startedAt  DateTime? // Unix timestamp
+  completedAt DateTime? // Unix timestamp
+  createdAt  DateTime @default(now())
 
   agent      Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
 }
@@ -48,7 +48,7 @@ model Activity {
   type        String   @default("AGENT_ONLINE") // TASK_STARTED | TASK_COMPLETED | TASK_FAILED | AGENT_ONLINE | AGENT_OFFLINE | CONFIG_UPDATED
   description String
   metadata   String?  // SQLite JSON storage
-  createdAt  Int      @default(dbgenerated("strftime('%s', 'now')"))
+  createdAt  DateTime @default(now())
 
   agent      Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
 }
@@ -60,7 +60,7 @@ model AgentMetric {
   cpuUsage    Float?
   memoryUsage Float?
   apiCalls   Int      @default(0)
-  timestamp  Int      @default(dbgenerated("strftime('%s', 'now')"))
+  timestamp  DateTime @default(now())
 
   agent      Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
 }
