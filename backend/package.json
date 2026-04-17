@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3001",
+    "dev": "tsx server.ts",
     "build": "next build",
-    "start": "next start -p 3001",
+    "start": "node dist/server.js",
     "lint": "next lint",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
@@ -24,6 +24,7 @@
     "@types/react-dom": "^19.0.2",
     "@types/ws": "^8.5.13",
     "prisma": "^6.2.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.7.2"
   }
 }

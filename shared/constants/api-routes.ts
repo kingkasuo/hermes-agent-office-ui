@@ -1,25 +1,25 @@
-// API 路由常量
+// API 路由常量 (不含 /api 前缀，因为 API_BASE 已包含)
 
 export const API_ROUTES = {
   // Agent API
-  AGENTS: '/api/agents',
-  AGENT_BY_ID: (id: string) => `/api/agents/${id}`,
-  AGENT_STATUS: (id: string) => `/api/agents/${id}/status`,
-  AGENT_METRICS: (id: string) => `/api/agents/${id}/metrics`,
-  AGENT_ACTIVITIES: (id: string) => `/api/agents/${id}/activities`,
+  AGENTS: '/agents',
+  AGENT_BY_ID: (id: string) => `/agents/${id}`,
+  AGENT_STATUS: (id: string) => `/agents/${id}/status`,
+  AGENT_METRICS: (id: string) => `/agents/${id}/metrics`,
+  AGENT_ACTIVITIES: (id: string) => `/agents/${id}/activities`,
 
   // Task API
-  TASKS: '/api/tasks',
-  TASK_BY_ID: (id: string) => `/api/tasks/${id}`,
-  TASK_STATS: '/api/tasks/stats',
+  TASKS: '/tasks',
+  TASK_BY_ID: (id: string) => `/tasks/${id}`,
+  TASK_STATS: '/tasks/stats',
 
   // Log API
-  LOGS: '/api/logs',
-  LOG_STATS: '/api/logs/stats',
+  LOGS: '/logs',
+  LOG_STATS: '/logs/stats',
 
   // System API
-  HEALTH: '/api/health',
-  STATS: '/api/stats',
+  HEALTH: '/health',
+  STATS: '/stats',
 } as const;
 
 export const WS_ROUTES = {
