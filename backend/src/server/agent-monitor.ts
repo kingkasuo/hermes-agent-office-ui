@@ -12,7 +12,6 @@ import {
   getHermesVersion,
 } from '../lib/hermes-client';
 import type { AgentStatus } from '../../../shared/types/agent';
-import { getCurrentTimestamp } from '../lib/utils';
 
 /**
  * 监控配置
@@ -188,7 +187,7 @@ class AgentMonitor {
             where: { id: systemAgent.id },
             data: {
               status: newStatus,
-              updatedAt: getCurrentTimestamp(),
+              updatedAt: new Date(),
             },
           });
 
@@ -351,7 +350,7 @@ class AgentMonitor {
               logLevel: log.level,
               logId: log.id,
             }),
-            createdAt: log.timestamp,
+            createdAt: new Date(log.timestamp),
           },
         });
       }
@@ -476,7 +475,7 @@ class AgentMonitor {
             type: 'TASK_COMPLETED',
             description: `Daily stats: ${insights.totalSessions} sessions, ${insights.totalMessages} messages`,
             metadata: JSON.stringify(insights),
-            createdAt: getCurrentTimestamp(),
+            createdAt: new Date(),
           },
         });
       }
