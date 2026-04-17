@@ -24,14 +24,16 @@ const demoAgents: Array<{id: string; name: string; status: AgentStatus; color: s
   { id: '5', name: 'Hermes Epsilon', status: 'ERROR', color: '#ef4444', task: 'Error' },
 ];
 
-// Generate random historical data
+// Generate fixed historical data for SSR consistency
 function generateHistoricalData(base: number, variance: number, points: number): number[] {
-  return Array.from({ length: points }, () => 
-    Math.max(0, Math.min(100, base + (Math.random() - 0.5) * variance))
-  );
+  // Use fixed seed for consistent SSR/client rendering
+  return Array.from({ length: points }, (_, i) => {
+    const seed = (i * 17 + base * 7) % 100;
+    return Math.max(0, Math.min(100, seed));
+  });
 }
 
-// Initial activities
+// Initial activities - fixed data
 const initialActivities: ActivityItem[] = [
   { id: '1', time: '14:32', agent: 'Hermes Alpha', action: 'completed research task', level: 'info' },
   { id: '2', time: '14:28', agent: 'Hermes Beta', action: 'started code generation', level: 'info' },
@@ -56,7 +58,7 @@ export default function DashboardPage() {
   const [liveMetrics, setLiveMetrics] = useState({ cpu: 45, memory: 62, calls: 1247 });
   const [activities, setActivities] = useState(initialActivities);
 
-  // Simulate real-time updates
+  // Simulate real-time updates (client-only)
   useEffect(() => {
     const interval = setInterval(() => {
       // Update live metrics with small variations
@@ -69,8 +71,8 @@ export default function DashboardPage() {
       // Update historical data
       setMetrics((prev) => ({
         ...prev,
-        cpu: [...prev.cpu.slice(1), liveMetrics.cpu],
-        memory: [...prev.memory.slice(1), liveMetrics.memory],
+        cpu: [...prev.cpu.slice(1), Math.round(liveMetrics.cpu)],
+        memory: [...prev.memory.slice(1), Math.round(liveMetrics.memory)],
         totalApiCalls: liveMetrics.calls,
       }));
 
@@ -98,7 +100,7 @@ export default function DashboardPage() {
     }, 2000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [liveMetrics.cpu, liveMetrics.memory, liveMetrics.calls]);
 
   return (
     <div className="min-h-screen bg-[#1a1a2e] text-white">
