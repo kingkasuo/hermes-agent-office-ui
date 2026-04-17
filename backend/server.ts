@@ -1,6 +1,9 @@
 import { createServer } from 'http';
 import { parse } from 'url';
 import next from 'next';
+import { networkInterfaces } from 'os';
+
+// Use relative imports
 import { initWebSocketServer } from './src/lib/websocket-server';
 import { agentMonitor } from './src/server/agent-monitor';
 
@@ -9,7 +12,6 @@ const hostname = '0.0.0.0';
 const port = parseInt(process.env.PORT || '3001', 10);
 
 // Get local IP address for display
-import { networkInterfaces } from 'os';
 const nets = networkInterfaces();
 let localIp = 'localhost';
 for (const name of Object.keys(nets)) {

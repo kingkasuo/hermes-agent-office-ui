@@ -91,5 +91,5 @@ venv.bak/
 # Shared Types (Optional)
 # =====================
 # TypeScript build output
-lib/
-es/
+/shared/lib/
+/shared/es/
